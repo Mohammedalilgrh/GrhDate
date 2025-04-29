@@ -1,84 +1,42 @@
+import telebot
 from flask import Flask, request
-import sqlite3
-import requests
 
+API_TOKEN = '7759650411:AAH95VUJun0ZtueNRCFsFWRRiXnBk5h8lAs'
+bot = telebot.TeleBot(API_TOKEN)
 app = Flask(__name__)
 
-TOKEN = "7759650411:AAH95VUJun0ZtueNRCFsFWRRiXnBk5h8lAs"
-BOT_URL = f"https://api.telegram.org/bot{TOKEN}"
-CHANNEL_USERNAME = "@grhdate"
+# Handle /start
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.send_message(message.chat.id, "Welcome! Are you a Boy or a Girl?\nPlease type: Boy / Girl")
 
-def send_message(chat_id, text, buttons=None):
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    if buttons:
-        payload["reply_markup"] = buttons
-    requests.post(f"{BOT_URL}/sendMessage", json=payload)
+# Handle text
+@bot.message_handler(func=lambda m: True)
+def handle_all(message):
+    if message.text.lower() == "boy":
+        markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
+        markup.row("Unlock 1-week chat - $10")
+        markup.row("Chat with 3 girls - $2")
+        bot.send_message(message.chat.id, "Choose an offer:", reply_markup=markup)
+    elif message.text.lower() == "girl":
+        bot.send_message(message.chat.id, "Thanks! You’ll earn $0.1 per chat. When you reach $2, contact admin.")
+    elif "unlock" in message.text.lower() or "chat with 3" in message.text.lower():
+        bot.send_message(message.chat.id, "Send your Zain or Asiacell card number for access. We'll verify soon.")
 
-def init_db():
-    conn = sqlite3.connect("db.sqlite3")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            gender TEXT,
-            age INTEGER,
-            balance REAL DEFAULT 0,
-            referral TEXT,
-            is_girl INTEGER DEFAULT 0,
-            matched_girls TEXT DEFAULT ""
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-@app.route("/", methods=["GET"])
-def home():
+# Flask Webhook
+@app.route('/', methods=['GET', 'POST'])
+def webhook():
+    if request.method == 'POST':
+        bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
+        return "ok"
     return "Bot is running."
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    data = request.get_json()
+# Set webhook on launch
+import os
+WEBHOOK_URL = f"https://grhdate.onrender.com/"
+bot.remove_webhook()
+bot.set_webhook(url=WEBHOOK_URL)
 
-    if "message" in data:
-        message = data["message"]
-        chat_id = message["chat"]["id"]
-        user_id = message["from"]["id"]
-        username = message["from"].get("username", "")
-        text = message.get("text", "").strip()
-
-        conn = sqlite3.connect("db.sqlite3")
-        c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
-        conn.commit()
-
-        if text.lower() == "/start":
-            send_message(chat_id, "Welcome! Are you a Boy or a Girl?\nPlease type: Boy / Girl")
-        elif text.lower() in ["boy", "girl"]:
-            c.execute("UPDATE users SET gender = ? WHERE user_id = ?", (text.lower(), user_id))
-            conn.commit()
-            if text.lower() == "girl":
-                c.execute("UPDATE users SET is_girl = 1 WHERE user_id = ?", (user_id,))
-                conn.commit()
-                send_message(chat_id, "Thanks for joining!\nYou'll earn $0.1 for each chat you join. Once you reach $2, message me for a payout.")
-            else:
-                buttons = {
-                    "keyboard": [["Unlock 1-week chat - $10"], ["Chat with 3 girls - $2"]],
-                    "resize_keyboard": True,
-                    "one_time_keyboard": True
-                }
-                send_message(chat_id, "Choose an offer:", buttons)
-        elif "unlock" in text.lower() or "chat with 3" in text.lower():
-            send_message(chat_id, "To activate, send your Zain or Asiacell card number here. We'll verify and give you access.")
-            requests.post(f"{BOT_URL}/sendMessage", json={
-                "chat_id": CHANNEL_USERNAME,
-                "text": f"New payment request from @{username} ({user_id}):\n{text}"
-            })
-
-        conn.close()
-
-    return "ok"
+# Run Flask app
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))
