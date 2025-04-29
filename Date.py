@@ -1,7 +1,6 @@
 from flask import Flask, request
 import sqlite3
 import requests
-import time
 
 app = Flask(__name__)
 
@@ -50,7 +49,7 @@ def webhook():
         chat_id = message["chat"]["id"]
         user_id = message["from"]["id"]
         username = message["from"].get("username", "")
-        text = message.get("text", "")
+        text = message.get("text", "").strip()
 
         conn = sqlite3.connect("db.sqlite3")
         c = conn.cursor()
@@ -58,16 +57,14 @@ def webhook():
         conn.commit()
 
         if text.lower() == "/start":
-            send_message(chat_id, "Welcome! Are you a Boy or a Girl?"
-
-Please type: Boy / Girl")
+            send_message(chat_id, "Welcome! Are you a Boy or a Girl?\nPlease type: Boy / Girl")
         elif text.lower() in ["boy", "girl"]:
             c.execute("UPDATE users SET gender = ? WHERE user_id = ?", (text.lower(), user_id))
             conn.commit()
             if text.lower() == "girl":
                 c.execute("UPDATE users SET is_girl = 1 WHERE user_id = ?", (user_id,))
                 conn.commit()
-                send_message(chat_id, "Thanks for joining! You'll earn $0.1 for each chat you join. Once you reach $2, message me for a payout.")
+                send_message(chat_id, "Thanks for joining!\nYou'll earn $0.1 for each chat you join. Once you reach $2, message me for a payout.")
             else:
                 buttons = {
                     "keyboard": [["Unlock 1-week chat - $10"], ["Chat with 3 girls - $2"]],
@@ -79,8 +76,7 @@ Please type: Boy / Girl")
             send_message(chat_id, "To activate, send your Zain or Asiacell card number here. We'll verify and give you access.")
             requests.post(f"{BOT_URL}/sendMessage", json={
                 "chat_id": CHANNEL_USERNAME,
-                "text": f"New payment request from @{username} ({user_id}):
-{text}"
+                "text": f"New payment request from @{username} ({user_id}):\n{text}"
             })
 
         conn.close()
