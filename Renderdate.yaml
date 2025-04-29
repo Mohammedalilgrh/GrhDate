@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: telegram-dating-bot
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirementsdate.txt"
+    startCommand: "python Date.py"
