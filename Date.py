@@ -58,7 +58,7 @@ def webhook():
         conn.commit()
 
         if text.lower() == "/start":
-            send_message(chat_id, "Welcome! Are you a Boy or a Girl?
+            send_message(chat_id, "Welcome! Are you a Boy or a Girl?"
 
 Please type: Boy / Girl")
         elif text.lower() in ["boy", "girl"]:
