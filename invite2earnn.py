@@ -3,8 +3,8 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # إعدادات البوت
-API_ID = 12345678  # ضع API ID من my.telegram.org
-API_HASH = "your_api_hash"  # ضع API HASH
+API_ID = 21706160  # ضع API ID من my.telegram.org
+API_HASH = "548b91f0e7cd2e44bbee05190620d9f4"  # ضع API HASH
 BOT_TOKEN = "7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY"
 CHANNEL_USERNAME = "@invite2earnn"
 ORDER_CHANNEL = "@invite2orders"
