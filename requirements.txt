@@ -1,3 +1,5 @@
 flask
 pytelegrambotapi 
 requests
+pyrogram
+tgcrypto
