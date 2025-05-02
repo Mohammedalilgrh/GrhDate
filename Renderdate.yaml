@@ -1,7 +1,7 @@
 services:
   - type: web
-    name: telegram-dating-bot
+    name: telegram-invite2earnn-bot
     env: python
     plan: free
     buildCommand: "pip install -r requirementsdate.txt"
-    startCommand: "python Date.py"
+    startCommand: "python invite2earnn.py"
