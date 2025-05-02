@@ -1,7 +1,7 @@
 import sqlite3
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+from pyrogram.errors import UserNotParticipant
 
 # إعدادات البوت
 API_ID = 21706160
@@ -10,224 +10,172 @@ BOT_TOKEN = "7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY"
 CHANNEL_USERNAME = "@invite2earnn"
 ORDER_CHANNEL = "@invite2orders"
 
-# إنشاء تطبيق البوت
-app = Client(
-    "invite2earn_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+app = Client("invite2earnn", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# إعداد قاعدة البيانات
-def setup_database():
-    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
-    cursor = conn.cursor()
-    
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        code TEXT UNIQUE,
-        balance REAL DEFAULT 0.0,
-        referrals INTEGER DEFAULT 0,
-        left_referrals INTEGER DEFAULT 0,
-        join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    conn.commit()
-    return conn, cursor
+# قاعدة البيانات
+conn = sqlite3.connect("data.db", check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS users 
+             (user_id INTEGER PRIMARY KEY, 
+              username TEXT, 
+              code TEXT, 
+              balance REAL, 
+              referrals INTEGER, 
+              left_referrals INTEGER)''')
+conn.commit()
 
-db_conn, db_cursor = setup_database()
+# توليد كود فريد
+def generate_code(user_id):
+    return f"C{user_id}D"
 
-# توليد كود مستخدم فريد
-def generate_user_code(user_id):
-    return f"INVITE-{user_id}-CODE"
-
-# التحقق من الاشتراك في القناة (مُحسّن)
-async def verify_channel_subscription(user_id):
+# التحقق من الاشتراك بالقناة
+async def check_subscription(client, user_id):
     try:
-        chat_member = await app.get_chat_member(CHANNEL_USERNAME, user_id)
-        return chat_member.status in ["member", "administrator", "creator"]
-    except UserNotParticipant:
-        return False
-    except ChatAdminRequired:
-        print(f"البوت ليس مشرفًا في القناة {CHANNEL_USERNAME}")
-        return True  # تجاهل الخطأ إذا كان البوت ليس مشرفًا
-    except Exception as e:
-        print(f"خطأ في التحقق من الاشتراك: {e}")
+        member = await client.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except:
         return False
 
-# لوحة المفاتيح الرئيسية
-def get_main_keyboard():
+# القائمة الرئيسية
+def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 شراء كود الربح", callback_data="buy_code")],
-        [InlineKeyboardButton("💰 ربحني الآن", callback_data="earn_money")],
-        [InlineKeyboardButton("💸 سحب الأرباح", callback_data="withdraw")],
-        [InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")]
+        [InlineKeyboardButton("شراء كود الربح الخاص بي", callback_data="buy_code")],
+        [InlineKeyboardButton("ربّحني الآن $", callback_data="share_link")],
+        [InlineKeyboardButton("اسحب أموالي الآن", callback_data="withdraw")]
     ])
 
-# معالجة أمر /start
+# بدء البوت
 @app.on_message(filters.command("start"))
-async def start_command(client, message: Message):
-    user = message.from_user
-    referral_code = None
+async def start(client, message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "None"
     
-    # التحقق من وجود كود إحالة
-    if len(message.command) > 1:
-        referral_code = message.command[1]
-    
-    # التحقق من الاشتراك في القناة
-    is_subscribed = await verify_channel_subscription(user.id)
-    
-    if not is_subscribed:
-        join_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("انضم للقناة", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
-            [InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data="check_sub")]
+    subscribed = await check_subscription(client, user_id)
+    if not subscribed:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("الاشتراك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.strip('@')}")],
+            [InlineKeyboardButton("تم الاشتراك ✅", callback_data="check_sub")]
         ])
-        await message.reply_text(
-            f"👋 مرحبًا {user.first_name}!\n\n"
-            "🔒 للوصول إلى جميع ميزات البوت، يرجى الاشتراك في قناتنا:\n"
-            f"{CHANNEL_USERNAME}\n\n"
-            "بعد الاشتراك اضغط على زر التأكيد",
-            reply_markup=join_keyboard
-        )
+        await message.reply("لبدء استخدام البوت يجب عليك الاشتراك بالقناة @invite2earnn", reply_markup=keyboard)
         return
     
-    # تسجيل المستخدم الجديد
-    db_cursor.execute("SELECT * FROM users WHERE user_id = ?", (user.id,))
-    user_data = db_cursor.fetchone()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    if not user:
+        c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", 
+                 (user_id, username, "", 0.0, 0, 0))
+        conn.commit()
     
-    if not user_data:
-        user_code = generate_user_code(user.id)
-        db_cursor.execute(
-            "INSERT INTO users (user_id, username, code) VALUES (?, ?, ?)",
-            (user.id, user.username, user_code)
-        )
-        
-        # معالجة الإحالة إذا وجدت
-        if referral_code:
-            db_cursor.execute(
-                "UPDATE users SET balance = balance + 0.5, referrals = referrals + 1 "
-                "WHERE code = ?", (referral_code,)
-            db_cursor.execute(
-                "UPDATE users SET balance = balance + 0.5 "
-                "WHERE user_id = ?", (user.id,))
-        
-        db_conn.commit()
+    code = generate_code(user_id)
+    c.execute("UPDATE users SET code = ? WHERE user_id = ?", (code, user_id))
+    conn.commit()
+    
+    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    balance = c.fetchone()[0]
+    
+    await message.reply(
+        f"1. اسم المستخدم: @{username}\n2. المبلغ الإجمالي: {balance:.2f}$\n3. كود الربح الخاص بك: {code}",
+        reply_markup=main_menu()
+    )
+
+# تحقق من الاشتراك بعد الضغط على تم الاشتراك
+@app.on_callback_query(filters.regex("check_sub"))
+async def recheck_subscription(client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    subscribed = await check_subscription(client, user_id)
+    if subscribed:
+        await callback_query.message.delete()
+        await start(client, callback_query.message)
     else:
-        user_code = user_data[2]
-    
-    # عرض معلومات المستخدم
-    db_cursor.execute(
-        "SELECT balance, referrals FROM users WHERE user_id = ?", 
-        (user.id,))
-    balance, referrals = db_cursor.fetchone()
-    
-    await message.reply_text(
-        f"🎉 أهلاً بك في بوت Invite2Earn!\n\n"
-        f"👤 معرفك: @{user.username}\n"
-        f"🆔 كودك الخاص: {user_code}\n"
-        f"💰 رصيدك: ${balance:.2f}\n"
-        f"👥 عدد الإحالات: {referrals}\n\n"
-        "اختر أحد الخيارات من الأسفل:",
-        reply_markup=get_main_keyboard()
-    )
+        await callback_query.answer("يرجى الاشتراك أولاً.", show_alert=True)
 
-# زر تأكيد الاشتراك
-@app.on_callback_query(filters.regex("^check_sub$"))
-async def check_subscription_callback(client, callback_query: CallbackQuery):
-    user = callback_query.from_user
-    
-    try:
-        is_subscribed = await verify_channel_subscription(user.id)
-        
-        if is_subscribed:
-            await callback_query.message.delete()
-            await start_command(client, callback_query.message)
-        else:
-            await callback_query.answer(
-                "⚠️ لم يتم العثور على اشتراكك. يرجى الانضمام للقناة أولاً!",
-                show_alert=True
-            )
-    except Exception as e:
-        print(f"Error in subscription check: {e}")
-        await callback_query.answer(
-            "❌ حدث خطأ أثناء التحقق. يرجى المحاولة لاحقاً.",
-            show_alert=True
-        )
-
-# معالجة شراء الكود
-@app.on_callback_query(filters.regex("^buy_code$"))
-async def buy_code_handler(client, callback_query: CallbackQuery):
-    payment_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 باي بال", callback_data="pay_paypal")],
-        [InlineKeyboardButton("📱 تحويل مصرفي", callback_data="pay_bank")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
+# شراء كود
+@app.on_callback_query(filters.regex("buy_code"))
+async def buy_code(client, callback_query: CallbackQuery):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("أسيا سيل", callback_data="pay_asiacell")],
+        [InlineKeyboardButton("زين العراق", callback_data="pay_zain")],
+        [InlineKeyboardButton("رجوع", callback_data="back")]
     ])
-    
     await callback_query.message.edit_text(
-        "💳 طرق الدفع المتاحة:\n\n"
-        "1. باي بال - 2$\n"
-        "2. تحويل بنكي - 2$\n\n"
-        "اختر طريقة الدفع المناسبة:",
-        reply_markup=payment_keyboard
+        "اختر طريقة الدفع لشراء كود الربح الخاص بك مقابل 2$:",
+        reply_markup=keyboard
     )
 
-# معالجة ربح المال
-@app.on_callback_query(filters.regex("^earn_money$"))
-async def earn_money_handler(client, callback_query: CallbackQuery):
-    user = callback_query.from_user
-    
-    db_cursor.execute("SELECT code FROM users WHERE user_id = ?", (user.id,))
-    user_code = db_cursor.fetchone()[0]
-    
-    invite_link = f"https://t.me/{(await app.get_me()).username}?start={user_code}"
-    
+# طرق الدفع
+@app.on_callback_query(filters.regex("pay_(asiacell|zain)"))
+async def process_payment(client, callback_query: CallbackQuery):
+    method = callback_query.data.split("_")[1]
     await callback_query.message.edit_text(
-        f"📣 رابط الدعوة الخاص بك:\n\n{invite_link}\n\n"
-        "🎁 لكل شخص يسجل باستخدام رابطك:\n"
-        "- تحصل على 0.5$\n"
-        "- هو يحصل على 0.5$\n\n"
-        "🔗 شارك الرابط مع أصدقائك واكسب المال!",
+        f"ارسل الآن رصيد {method} بقيمة 2$، ثم أرسل رقم الهاتف المرسل منه."
+    )
+
+@app.on_message(filters.private & filters.text)
+async def get_payment_info(client, message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "None"
+    c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,))
+    code = c.fetchone()[0]
+    
+    await client.send_message(
+        ORDER_CHANNEL,
+        f"طلب شراء كود:\nالمستخدم: @{username}\nالرقم: {message.text}\nالكود: {code}"
+    )
+    await client.send_message(ORDER_CHANNEL, code)
+    await message.reply("تم إرسال طلبك، سيتم التواصل معك بعد التحقق.")
+
+# مشاركة رابط دعوة
+@app.on_callback_query(filters.regex("share_link"))
+async def share_link(client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,))
+    code = c.fetchone()[0]
+    await callback_query.message.edit_text(
+        f"شارك هذا الرابط مع أصدقائك: \nhttps://t.me/{app.me.username}?start={code}\nكل شخص يدخل من رابطك ويشترك بالقناة تكسب 0.1$",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
+            [InlineKeyboardButton("رجوع", callback_data="back")]
         ])
     )
 
-# معالجة سحب الأرباح
-@app.on_callback_query(filters.regex("^withdraw$"))
-async def withdraw_handler(client, callback_query: CallbackQuery):
-    user = callback_query.from_user
-    
-    db_cursor.execute(
-        "SELECT balance FROM users WHERE user_id = ?", 
-        (user.id,))
-    balance = db_cursor.fetchone()[0]
-    
-    if balance < 5.0:
-        await callback_query.answer(
-            f"🚫 الحد الأدنى للسحب هو 5$. رصيدك الحالي: ${balance:.2f}",
-            show_alert=True
-        )
+# سحب الأرباح
+@app.on_callback_query(filters.regex("withdraw"))
+async def withdraw_request(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text("اكتب كود الربح الخاص بك للتحقق:")
+
+@app.on_message(filters.private & filters.text)
+async def process_withdraw(client, message: Message):
+    user_id = message.from_user.id
+    code_entered = message.text.strip()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    if not user or user[2] != code_entered:
+        await message.reply("الكود غير صحيح.")
         return
     
-    withdraw_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 باي بال", callback_data="withdraw_paypal")],
-        [InlineKeyboardButton("📱 حوالة بنكية", callback_data="withdraw_bank")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]
-    ])
+    balance = user[3]
+    if balance < 2.0:
+        await message.reply("يجب أن يكون لديك على الأقل 2$ للسحب.")
+        return
     
-    await callback_query.message.edit_text(
-        f"💵 رصيدك الحالي: ${balance:.2f}\n\n"
-        "اختر طريقة السحب المفضلة:",
-        reply_markup=withdraw_keyboard
+    await message.reply(
+        f"تفاصيل السحب:\nالكود: {user[2]}\nالرصيد: {balance:.2f}$\nالإحالات: {user[4]}\nالإلغاء: {user[5]}\nسيتم التواصل معك قريباً.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("زين العراق", callback_data="withdraw_zain")],
+            [InlineKeyboardButton("أسيا سيل", callback_data="withdraw_asiacell")],
+            [InlineKeyboardButton("ماستر كارد/كي كارد", callback_data="withdraw_card")],
+            [InlineKeyboardButton("عملة رقمية", callback_data="withdraw_crypto")]
+        ])
+    )
+    await client.send_message(
+        ORDER_CHANNEL,
+        f"طلب سحب جديد:\nالمستخدم: @{user[1]}\nالرصيد: {balance:.2f}$\nالكود: {user[2]}\nيرجى مراجعة الطلب."
     )
 
-# معالجة العودة للقائمة الرئيسية
-@app.on_callback_query(filters.regex("^main_menu$"))
-async def back_to_main(client, callback_query: CallbackQuery):
-    await start_command(client, callback_query.message)
+# رجوع
+@app.on_callback_query(filters.regex("back"))
+async def go_back(client, callback_query: CallbackQuery):
+    await start(client, callback_query.message)
 
-# تشغيل البوت
 if __name__ == "__main__":
-    print("✅ البوت يعمل بنجاح...")
+    print("البوت يعمل بنجاح.")
     app.run()
