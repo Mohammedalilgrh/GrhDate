@@ -3,5 +3,5 @@ services:
     name: telegram-invite2earnn-bot
     env: python
     plan: free
-    buildCommand: "pip install -r requirementsdate.txt"
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "python invite2earnn.py"
