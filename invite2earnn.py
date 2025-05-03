@@ -2,6 +2,18 @@ import sqlite3
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+from flask import Flask
+import threading
+
+# Flask app for web server
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Telegram Bot is Running!", 200
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=5000)
 
 # إعدادات البوت
 API_ID = 21706160
@@ -10,6 +22,7 @@ BOT_TOKEN = "7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY"
 CHANNEL_USERNAME = "@invite2earnn"  # تأكد من أن البوت مشرف في القناة
 ORDER_CHANNEL = "@invite2orders"
 
+# Initialize Pyrogram client
 app = Client("invite2earnn", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # قاعدة البيانات
@@ -123,9 +136,75 @@ async def verify_subscription(client, callback_query: CallbackQuery):
             show_alert=True
         )
 
-# باقي الدوال (شراء كود، مشاركة الرابط، السحب...) تبقى كما هي
-# [ضع هنا باقي الدوال التي لم تتغير من الكود الأصلي]
+# شراء كود الربح
+@app.on_callback_query(filters.regex("^buy_code$"))
+async def buy_code(client, callback_query: CallbackQuery):
+    await callback_query.answer("🚀 سيتم توجيهك لشراء الكود قريباً...", show_alert=True)
+    await callback_query.message.reply(
+        "🛒 لشراء كود الربح:\n\n"
+        "1. ستحصل على كود خاص بك\n"
+        "2. يمكنك مشاركته مع الآخرين\n"
+        "3. تربح من كل شخص يستخدم كودك\n\n"
+        "سيتم تفعيل هذه الخدمة قريباً",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")]
+        ])
+    )
 
-if __name__ == "__main__":
+# مشاركة الرابط
+@app.on_callback_query(filters.regex("^share_link$"))
+async def share_link(client, callback_query: CallbackQuery):
+    user = callback_query.from_user
+    user_code = generate_code(user.id)
+    share_text = (
+        f"🚀 انضم إلى برنامج الربح من التوصيات!\n\n"
+        f"🔗 رابطك الخاص: https://t.me/{(await app.get_me()).username}?start={user_code}\n\n"
+        f"📌 لكل شخص يسجل عبر رابطك، ستحصل على مكافأة!"
+    )
+    await callback_query.message.reply(
+        share_text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔗 مشاركة الرابط", url=f"https://t.me/share/url?url={share_text}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")]
+        ])
+    )
+
+# سحب الأرباح
+@app.on_callback_query(filters.regex("^withdraw$"))
+async def withdraw(client, callback_query: CallbackQuery):
+    user = callback_query.from_user
+    c.execute("SELECT balance FROM users WHERE user_id = ?", (user.id,))
+    balance = c.fetchone()[0]
+    
+    if balance < 10:  # حد السحب الأدنى
+        await callback_query.answer(
+            f"❌ الرصيد غير كافي للسحب. الحد الأدنى للسحب هو $10. رصيدك الحالي: ${balance:.2f}",
+            show_alert=True
+        )
+    else:
+        await callback_query.message.reply(
+            f"💰 رصيدك الحالي: ${balance:.2f}\n\n"
+            "يرجى إرسال تفاصيل محفظتك (PayPal أو غيرها) لاستكمال عملية السحب.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ إلغاء", callback_data="back_to_main")]
+            ])
+        )
+
+# العودة للقائمة الرئيسية
+@app.on_callback_query(filters.regex("^back_to_main$"))
+async def back_to_main(client, callback_query: CallbackQuery):
+    await callback_query.message.delete()
+    await start(client, callback_query.message)
+
+def run_telegram_bot():
     print("✅ البوت يعمل بنجاح...")
     app.run()
+
+if __name__ == "__main__":
+    # Start Flask server in a separate thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Start Telegram bot
+    run_telegram_bot()
