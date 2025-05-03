@@ -1,4 +1,3 @@
-كله تمام هل في مشكلة بالكود؟
 from flask import Flask
 import sqlite3
 from pyrogram import Client, filters
