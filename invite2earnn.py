@@ -1,10 +1,11 @@
-from flask import Flask
+import os
+import time
+import asyncio
 import sqlite3
+from threading import Thread
+from flask import Flask, request
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-import asyncio
-import os
-from threading import Thread
 
 # إعدادات البوت
 API_ID = 21706160
@@ -15,9 +16,15 @@ ORDER_CHANNEL = "@invite2orders"
 
 # Flask App
 app = Flask(__name__)
-@app.route('/')
+
+@app.route("/")
 def home():
     return {"status": "Invite2Earn Bot is running!"}
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def receive_update():
+    bot.process_update(request.get_json(force=True))
+    return {"ok": True}
 
 # تشغيل البوت
 bot = Client("invite2earnn", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -27,18 +34,10 @@ def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        code TEXT,
-        balance REAL,
-        referrals INTEGER,
-        left_referrals INTEGER
-    )''')
+        user_id INTEGER PRIMARY KEY, username TEXT, code TEXT,
+        balance REAL, referrals INTEGER, left_referrals INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS referral_logs (
-        referrer_id INTEGER,
-        referred_id INTEGER,
-        joined INTEGER DEFAULT 1
-    )''')
+        referrer_id INTEGER, referred_id INTEGER, joined INTEGER DEFAULT 1)''')
     conn.commit()
     return conn, c
 
@@ -86,12 +85,15 @@ async def start_command(client, message: Message):
         c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", (user_id, username, "", 0.0, 0, 0))
         conn.commit()
         if referral_code:
-            referrer_id = int(referral_code[1:-1])
-            c.execute("SELECT * FROM users WHERE user_id = ?", (referrer_id,))
-            if c.fetchone():
-                c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, user_id))
-                c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
-                conn.commit()
+            try:
+                referrer_id = int(referral_code[1:-1])
+                c.execute("SELECT * FROM users WHERE user_id = ?", (referrer_id,))
+                if c.fetchone():
+                    c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, user_id))
+                    c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
+                    conn.commit()
+            except:
+                pass
 
     code = generate_code(user_id)
     c.execute("UPDATE users SET code = ? WHERE user_id = ?", (code, user_id))
@@ -135,9 +137,10 @@ async def show_share_link(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,))
     code = c.fetchone()[0]
+    bot_username = (await client.get_me()).username
     await callback_query.message.edit_text(
         f"شارك هذا الرابط مع أصدقائك:\n"
-        f"https://t.me/{await client.get_me().username}?start={code}\n\n"
+        f"https://t.me/{bot_username}?start={code}\n\n"
         f"كل شخص يدخل من رابطك ويشترك بالقناة تكسب 0.1$",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back")]])
     )
@@ -185,7 +188,6 @@ async def handle_text_message(client, message: Message):
                 [InlineKeyboardButton("عملة رقمية", callback_data="withdraw_crypto")]
             ])
         )
-
         await client.send_message(
             ORDER_CHANNEL,
             f"طلب سحب جديد:\nالمستخدم: @{username}\nالرصيد: {balance:.2f}$\nالكود: {code}\nيرجى مراجعة الطلب."
@@ -209,15 +211,14 @@ async def monitor_unsubscribes():
         conn.commit()
         await asyncio.sleep(3600)
 
-# بدء تشغيل البوت
-async def start_bot():
-    await bot.start()
-    print("Invite2Earn bot is running...")
-    asyncio.create_task(monitor_unsubscribes())
-    await asyncio.Event().wait()
-
 # نقطة التشغيل
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_bot())
+    async def main():
+        await bot.set_webhook(f"https://invite2earnn.onrender.com/"7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY"
+        await bot.start()
+        print("Webhook is set and bot is running...")
+        asyncio.create_task(monitor_unsubscribes())
+        await asyncio.Event().wait()
+
     Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))).start()
+    asyncio.run(main())
