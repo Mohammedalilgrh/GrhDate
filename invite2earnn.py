@@ -245,3 +245,4 @@ if __name__ == "__main__":
     
     # Run the bot in the main thread
     asyncio.run(run_bot())
+bot.set_webhook(url='https://invite2earnn.onrender.com' + TOKEN)
