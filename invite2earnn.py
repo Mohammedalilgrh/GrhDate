@@ -8,8 +8,8 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 
 # Bot settings
 API_ID = 21706160
-API_HASH = '548b91f0e7cd2e44bbee05190620d9f4'
-BOT_TOKEN = '7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY'
+API_HASH = "548b91f0e7cd2e44bbee05190620d9f4"
+BOT_TOKEN = "7551982212:AAHpBiA097R5WIi-rHnNA-Bc6GbniFpOoVg"
 CHANNEL_USERNAME = "@invite2earnn"
 ORDER_CHANNEL = "@invite2orders"
 
