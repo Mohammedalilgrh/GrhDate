@@ -13,9 +13,8 @@ BOT_TOKEN = '7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY'
 CHANNEL_USERNAME = "@invite2earnn"
 ORDER_CHANNEL = "@invite2orders"
 
-# Flask app
+# Flask App
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return {"status": "Invite2Earn Bot is running!"}
@@ -45,6 +44,7 @@ def init_db():
 
 conn, c = init_db()
 
+# أدوات مساعدة
 def generate_code(user_id):
     return f"C{user_id}D"
 
@@ -62,8 +62,9 @@ def main_menu():
         [InlineKeyboardButton("اسحب أموالي الآن", callback_data="withdraw")]
     ])
 
+# أوامر ومهام البوت
 @bot.on_message(filters.command("start"))
-async def start(client, message: Message):
+async def start_command(client, message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "None"
     args = message.text.split()
@@ -80,10 +81,10 @@ async def start(client, message: Message):
 
     c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
+
     if not user:
         c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", (user_id, username, "", 0.0, 0, 0))
         conn.commit()
-
         if referral_code:
             referrer_id = int(referral_code[1:-1])
             c.execute("SELECT * FROM users WHERE user_id = ?", (referrer_id,))
@@ -100,22 +101,23 @@ async def start(client, message: Message):
     balance = c.fetchone()[0]
 
     await message.reply(
-        f"1. اسم المستخدم: @{username}\n2. المبلغ الإجمالي: {balance:.2f}$\n3. كود الربح الخاص بك: {code}",
+        f"1. اسم المستخدم: @{username}\n"
+        f"2. المبلغ الإجمالي: {balance:.2f}$\n"
+        f"3. كود الربح الخاص بك: {code}",
         reply_markup=main_menu()
     )
 
 @bot.on_callback_query(filters.regex("check_sub"))
-async def recheck_subscription(client, callback_query: CallbackQuery):
+async def check_sub_again(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    subscribed = await check_subscription(client, user_id)
-    if subscribed:
+    if await check_subscription(client, user_id):
         await callback_query.message.delete()
-        await start(client, callback_query.message)
+        await start_command(client, callback_query.message)
     else:
         await callback_query.answer("يرجى الاشتراك أولاً.", show_alert=True)
 
 @bot.on_callback_query(filters.regex("buy_code"))
-async def buy_code(client, callback_query: CallbackQuery):
+async def buy_code_menu(client, callback_query: CallbackQuery):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("أسيا سيل", callback_data="pay_asiacell")],
         [InlineKeyboardButton("زين العراق", callback_data="pay_zain")],
@@ -124,12 +126,32 @@ async def buy_code(client, callback_query: CallbackQuery):
     await callback_query.message.edit_text("اختر طريقة الدفع لشراء كود الربح الخاص بك مقابل 2$:", reply_markup=keyboard)
 
 @bot.on_callback_query(filters.regex("pay_(asiacell|zain)"))
-async def process_payment(client, callback_query: CallbackQuery):
+async def pay_now(client, callback_query: CallbackQuery):
     method = callback_query.data.split("_")[1]
     await callback_query.message.edit_text(f"ارسل الآن رصيد {method} بقيمة 2$، ثم أرسل رقم الهاتف المرسل منه.")
 
+@bot.on_callback_query(filters.regex("share_link"))
+async def show_share_link(client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,))
+    code = c.fetchone()[0]
+    await callback_query.message.edit_text(
+        f"شارك هذا الرابط مع أصدقائك:\n"
+        f"https://t.me/{await client.get_me().username}?start={code}\n\n"
+        f"كل شخص يدخل من رابطك ويشترك بالقناة تكسب 0.1$",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back")]])
+    )
+
+@bot.on_callback_query(filters.regex("withdraw"))
+async def request_withdraw(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text("اكتب كود الربح الخاص بك للتحقق:")
+
+@bot.on_callback_query(filters.regex("back"))
+async def back_to_menu(client, callback_query: CallbackQuery):
+    await start_command(client, callback_query.message)
+
 @bot.on_message(filters.private & filters.text)
-async def handle_private_text(client, message: Message):
+async def handle_text_message(client, message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "None"
     text = message.text.strip()
@@ -150,8 +172,12 @@ async def handle_private_text(client, message: Message):
             return
 
         await message.reply(
-            f"تفاصيل السحب:\nالكود: {user[2]}\nالرصيد: {balance:.2f}$\n"
-            f"الإحالات: {user[4]}\nالإلغاء: {user[5]}\nسيتم التواصل معك قريباً.",
+            f"تفاصيل السحب:\n"
+            f"الكود: {user[2]}\n"
+            f"الرصيد: {balance:.2f}$\n"
+            f"الإحالات: {user[4]}\n"
+            f"الإلغاء: {user[5]}\n\n"
+            f"سيتم التواصل معك قريباً.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("زين العراق", callback_data="withdraw_zain")],
                 [InlineKeyboardButton("أسيا سيل", callback_data="withdraw_asiacell")],
@@ -159,10 +185,10 @@ async def handle_private_text(client, message: Message):
                 [InlineKeyboardButton("عملة رقمية", callback_data="withdraw_crypto")]
             ])
         )
+
         await client.send_message(
             ORDER_CHANNEL,
-            f"طلب سحب جديد:\nالمستخدم: @{username}\nالرصيد: {balance:.2f}$\n"
-            f"الكود: {code}\nيرجى مراجعة الطلب."
+            f"طلب سحب جديد:\nالمستخدم: @{username}\nالرصيد: {balance:.2f}$\nالكود: {code}\nيرجى مراجعة الطلب."
         )
     else:
         await client.send_message(
@@ -171,46 +197,26 @@ async def handle_private_text(client, message: Message):
         )
         await message.reply("تم إرسال طلبك، سيتم التواصل معك بعد التحقق.")
 
-@bot.on_callback_query(filters.regex("share_link"))
-async def share_link(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,))
-    code = c.fetchone()[0]
-    await callback_query.message.edit_text(
-        f"شارك هذا الرابط مع أصدقائك: \nhttps://t.me/{await client.get_me().username}?start={code}\n"
-        "كل شخص يدخل من رابطك ويشترك بالقناة تكسب 0.1$",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back")]])
-    )
-
-@bot.on_callback_query(filters.regex("withdraw"))
-async def withdraw_request(client, callback_query: CallbackQuery):
-    await callback_query.message.edit_text("اكتب كود الربح الخاص بك للتحقق:")
-
-@bot.on_callback_query(filters.regex("back"))
-async def go_back(client, callback_query: CallbackQuery):
-    await start(client, callback_query.message)
-
-# فحص الاشتراكات دورياً
-async def check_left_users():
+# فحص الاشتراك كل ساعة
+async def monitor_unsubscribes():
     while True:
         c.execute("SELECT user_id, username FROM users")
         users = c.fetchall()
         for user_id, username in users:
-            is_member = await check_subscription(bot, user_id)
-            if not is_member:
+            if not await check_subscription(bot, user_id):
                 c.execute("UPDATE users SET balance = balance - 0.1, left_referrals = left_referrals + 1 WHERE user_id = ?", (user_id,))
                 await bot.send_message(ORDER_CHANNEL, f"المستخدم @{username} ألغى الاشتراك في القناة.")
         conn.commit()
         await asyncio.sleep(3600)
 
-# تشغيل البوت
+# بدء تشغيل البوت
 async def start_bot():
     await bot.start()
     print("Invite2Earn bot is running...")
-    asyncio.create_task(check_left_users())
+    asyncio.create_task(monitor_unsubscribes())
     await asyncio.Event().wait()
 
-# بدء التشغيل
+# نقطة التشغيل
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(start_bot())
