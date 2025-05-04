@@ -1,5 +1,4 @@
 import os
-import time
 import asyncio
 import sqlite3
 from threading import Thread
@@ -7,7 +6,7 @@ from flask import Flask, request
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-# إعدادات البوت
+# Bot settings
 API_ID = 21706160
 API_HASH = '548b91f0e7cd2e44bbee05190620d9f4'
 BOT_TOKEN = '7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY'
@@ -21,29 +20,30 @@ app = Flask(__name__)
 def home():
     return {"status": "Invite2Earn Bot is running!"}
 
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def receive_update():
-    bot.process_update(request.get_json(force=True))
-    return {"ok": True}
-
-# تشغيل البوت
+# Initialize the bot
 bot = Client("invite2earnn", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# قاعدة البيانات
+# Database setup
 def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY, username TEXT, code TEXT,
-        balance REAL, referrals INTEGER, left_referrals INTEGER)''')
+        user_id INTEGER PRIMARY KEY, 
+        username TEXT, 
+        code TEXT,
+        balance REAL, 
+        referrals INTEGER, 
+        left_referrals INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS referral_logs (
-        referrer_id INTEGER, referred_id INTEGER, joined INTEGER DEFAULT 1)''')
+        referrer_id INTEGER, 
+        referred_id INTEGER, 
+        joined INTEGER DEFAULT 1)''')
     conn.commit()
     return conn, c
 
 conn, c = init_db()
 
-# أدوات مساعدة
+# Helper functions
 def generate_code(user_id):
     return f"C{user_id}D"
 
@@ -51,7 +51,8 @@ async def check_subscription(client, user_id):
     try:
         member = await client.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ("member", "administrator", "creator")
-    except:
+    except Exception as e:
+        print(f"Subscription check error: {e}")
         return False
 
 def main_menu():
@@ -61,7 +62,7 @@ def main_menu():
         [InlineKeyboardButton("اسحب أموالي الآن", callback_data="withdraw")]
     ])
 
-# أوامر ومهام البوت
+# Bot commands and handlers
 @bot.on_message(filters.command("start"))
 async def start_command(client, message: Message):
     user_id = message.from_user.id
@@ -82,18 +83,21 @@ async def start_command(client, message: Message):
     user = c.fetchone()
 
     if not user:
-        c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", (user_id, username, "", 0.0, 0, 0))
+        c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", 
+                 (user_id, username, "", 0.0, 0, 0))
         conn.commit()
         if referral_code:
             try:
                 referrer_id = int(referral_code[1:-1])
                 c.execute("SELECT * FROM users WHERE user_id = ?", (referrer_id,))
                 if c.fetchone():
-                    c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, user_id))
-                    c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
+                    c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", 
+                             (referrer_id, user_id))
+                    c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", 
+                             (referrer_id,))
                     conn.commit()
-            except:
-                pass
+            except Exception as e:
+                print(f"Referral error: {e}")
 
     code = generate_code(user_id)
     c.execute("UPDATE users SET code = ? WHERE user_id = ?", (code, user_id))
@@ -125,12 +129,17 @@ async def buy_code_menu(client, callback_query: CallbackQuery):
         [InlineKeyboardButton("زين العراق", callback_data="pay_zain")],
         [InlineKeyboardButton("رجوع", callback_data="back")]
     ])
-    await callback_query.message.edit_text("اختر طريقة الدفع لشراء كود الربح الخاص بك مقابل 2$:", reply_markup=keyboard)
+    await callback_query.message.edit_text(
+        "اختر طريقة الدفع لشراء كود الربح الخاص بك مقابل 2$:", 
+        reply_markup=keyboard
+    )
 
 @bot.on_callback_query(filters.regex("pay_(asiacell|zain)"))
 async def pay_now(client, callback_query: CallbackQuery):
     method = callback_query.data.split("_")[1]
-    await callback_query.message.edit_text(f"ارسل الآن رصيد {method} بقيمة 2$، ثم أرسل رقم الهاتف المرسل منه.")
+    await callback_query.message.edit_text(
+        f"ارسل الآن رصيد {method} بقيمة 2$، ثم أرسل رقم الهاتف المرسل منه."
+    )
 
 @bot.on_callback_query(filters.regex("share_link"))
 async def show_share_link(client, callback_query: CallbackQuery):
@@ -142,7 +151,9 @@ async def show_share_link(client, callback_query: CallbackQuery):
         f"شارك هذا الرابط مع أصدقائك:\n"
         f"https://t.me/{bot_username}?start={code}\n\n"
         f"كل شخص يدخل من رابطك ويشترك بالقناة تكسب 0.1$",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back")]])
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("رجوع", callback_data="back")]
+        ])
     )
 
 @bot.on_callback_query(filters.regex("withdraw"))
@@ -153,7 +164,7 @@ async def request_withdraw(client, callback_query: CallbackQuery):
 async def back_to_menu(client, callback_query: CallbackQuery):
     await start_command(client, callback_query.message)
 
-@bot.on_message(filters.private & filters.text)
+@bot.on_message(filters.private & filters.text & ~filters.command("start"))
 async def handle_text_message(client, message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "None"
@@ -199,26 +210,38 @@ async def handle_text_message(client, message: Message):
         )
         await message.reply("تم إرسال طلبك، سيتم التواصل معك بعد التحقق.")
 
-# فحص الاشتراك كل ساعة
+# Subscription monitoring
 async def monitor_unsubscribes():
     while True:
-        c.execute("SELECT user_id, username FROM users")
-        users = c.fetchall()
-        for user_id, username in users:
-            if not await check_subscription(bot, user_id):
-                c.execute("UPDATE users SET balance = balance - 0.1, left_referrals = left_referrals + 1 WHERE user_id = ?", (user_id,))
-                await bot.send_message(ORDER_CHANNEL, f"المستخدم @{username} ألغى الاشتراك في القناة.")
-        conn.commit()
-        await asyncio.sleep(3600)
+        try:
+            c.execute("SELECT user_id, username FROM users")
+            users = c.fetchall()
+            for user_id, username in users:
+                if not await check_subscription(bot, user_id):
+                    c.execute("UPDATE users SET balance = balance - 0.1, left_referrals = left_referrals + 1 WHERE user_id = ?", (user_id,))
+                    await bot.send_message(
+                        ORDER_CHANNEL, 
+                        f"المستخدم @{username} ألغى الاشتراك في القناة."
+                    )
+            conn.commit()
+        except Exception as e:
+            print(f"Monitoring error: {e}")
+        await asyncio.sleep(3600)  # Check every hour
 
-# نقطة التشغيل
+# Run the bot
+async def run_bot():
+    await bot.start()
+    print("Bot started!")
+    asyncio.create_task(monitor_unsubscribes())
+    await asyncio.Event().wait()
+
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 if __name__ == "__main__":
-    async def main():
-        await bot.set_webhook(f"https://invite2earnn.onrender.com/"7551982212:AAHSgM4JuGnOBBzafGqGFZhY1-gwVo7g4nY"
-        await bot.start()
-        print("Webhook is set and bot is running...")
-        asyncio.create_task(monitor_unsubscribes())
-        await asyncio.Event().wait()
-
-    Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))).start()
-    asyncio.run(main())
+    # Start Flask in a separate thread
+    flask_thread = Thread(target=run_flask)
+    flask_thread.start()
+    
+    # Run the bot in the main thread
+    asyncio.run(run_bot())
