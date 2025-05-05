@@ -6,10 +6,10 @@ from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-# Configuration - Use environment variables for production
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7897542906:AAGn878y8jEqD3eG55kIHpTNoe8lKnTOKco')
-CHANNEL_USERNAME = os.getenv('CHANNEL_USERNAME', "@intearnn")
-ORDER_CHANNEL = os.getenv('ORDER_CHANNEL', "@intorders")
+# Configuration (hardcoded for your setup)
+BOT_TOKEN = '7897542906:AAGn878y8jEqD3eG55kIHpTNoe8lKnTOKco'  # Replace with your actual bot token
+CHANNEL_USERNAME = "@intearnn"
+ORDER_CHANNEL = "@intorders"
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -18,11 +18,12 @@ app = Flask(__name__)
 def home():
     return {"status": "Bot is running!"}
 
-# Initialize Pyrogram client
+# Initialize Pyrogram client with minimal configuration
 bot = Client(
     "my_bot",
     bot_token=BOT_TOKEN,
-    in_memory=True  # No session file needed
+    in_memory=True,
+    no_updates=True  # Disable unnecessary update handling
 )
 
 # Database setup
@@ -30,7 +31,6 @@ def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     
-    # Create tables if they don't exist
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY, 
         username TEXT, 
@@ -78,7 +78,6 @@ async def start_command(client, message: Message):
     args = message.text.split()
     referral_code = args[1] if len(args) > 1 else None
 
-    # Check subscription
     if not await check_subscription(user_id):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("الاشتراك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.strip('@')}")],
@@ -87,15 +86,13 @@ async def start_command(client, message: Message):
         await message.reply("لبدء استخدام البوت يجب عليك الاشتراك بالقناة", reply_markup=keyboard)
         return
 
-    # Initialize user if not exists
     c.execute("INSERT OR IGNORE INTO users (user_id, username, code) VALUES (?, ?, ?)", 
              (user_id, username, ""))
     
-    # Handle referral if exists
     if referral_code:
         try:
-            referrer_id = int(referral_code[1:-1])  # Extract ID from code like C123D
-            if referrer_id != user_id:  # Prevent self-referral
+            referrer_id = int(referral_code[1:-1])
+            if referrer_id != user_id:
                 c.execute("INSERT OR IGNORE INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", 
                          (referrer_id, user_id))
                 c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", 
@@ -103,12 +100,10 @@ async def start_command(client, message: Message):
         except Exception as e:
             print(f"Referral processing error: {e}")
 
-    # Generate and update user code
     code = generate_code(user_id)
     c.execute("UPDATE users SET code = ? WHERE user_id = ?", (code, user_id))
     conn.commit()
 
-    # Get user balance
     balance = c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
 
     await message.reply(
@@ -166,11 +161,9 @@ async def handle_text_messages(client, message: Message):
     username = message.from_user.username or "None"
     text = message.text.strip()
 
-    # Get user code
     code = c.execute("SELECT code FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
     
     if text == code:
-        # Withdrawal request
         balance = c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
         
         if balance < 2.0:
@@ -193,7 +186,6 @@ async def handle_text_messages(client, message: Message):
             f"طلب سحب جديد:\nالمستخدم: @{username}\nالرصيد: {balance:.2f}$\nالكود: {code}"
         )
     else:
-        # Payment receipt submission
         await client.send_message(
             ORDER_CHANNEL,
             f"طلب شراء كود:\nالمستخدم: @{username}\nالرقم: {text}\nالكود: {code}"
@@ -215,7 +207,7 @@ async def monitor_subscriptions():
             conn.commit()
         except Exception as e:
             print(f"Monitoring error: {e}")
-        await asyncio.sleep(3600)  # Check every hour
+        await asyncio.sleep(3600)
 
 # Flask runner
 def run_flask():
@@ -226,14 +218,12 @@ async def run_bot():
     await bot.start()
     print("Bot started successfully!")
     asyncio.create_task(monitor_subscriptions())
-    await asyncio.Event().wait()  # Run forever
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    # Start Flask in a daemon thread
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # Run the bot in the main thread
     try:
         asyncio.run(run_bot())
     except KeyboardInterrupt:
