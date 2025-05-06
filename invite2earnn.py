@@ -433,12 +433,12 @@ def bot_webhook():
 def set_webhook():
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url='https://invite2earnn.onrender.com + TOKEN)
+    bot.set_webhook(url='https://invite2earnn.onrender.com + TOKEN')
     return "Webhook is set!", 200
 
 if __name__ == '__main__':
     print("Bot is running...")
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url='https://invite2earnn.onrender.com + TOKEN)
+    bot.set_webhook(url='https://invite2earnn.onrender.com + TOKEN')
     app.run(host="0.0.0.0", port=5000)
