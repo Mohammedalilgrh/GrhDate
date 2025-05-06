@@ -1,2 +1,2 @@
-pip install 
-pytelegrambotapi flask
+pytelegrambotapi 
+flask
