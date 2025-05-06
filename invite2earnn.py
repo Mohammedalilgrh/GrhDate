@@ -4,20 +4,23 @@ import telebot
 from telebot import types
 import sqlite3
 import time
+import logging
 
+# تهيئة التطبيق
 app = Flask(__name__)
 TOKEN = '7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g'
-CHANNELS = ["@intearnn", "@s111sgrh"]  # Mandatory channels
+CHANNELS = ["@intearnn", "@s111sgrh"]  # قنوات الاشتراك الإجباري
 ORDER_CHANNEL = "@intorders"
-ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"
+ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"  # أضف أي دي الأدمن هنا
 bot = telebot.TeleBot(TOKEN)
+logging.basicConfig(level=logging.INFO)
 
-# Database setup
+# إعداد قاعدة البيانات
 def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     
-    # Users table
+    # جدول المستخدمين
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
@@ -25,20 +28,20 @@ def init_db():
         code TEXT,
         balance REAL DEFAULT 0.0,
         referrals INTEGER DEFAULT 0,
-        left_referrals INTEGER DEFAULT 0,
         investment_link TEXT,
-        last_menu TEXT
+        joined_date DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Referrals table
+    # جدول الإحالات
     c.execute('''CREATE TABLE IF NOT EXISTS referral_logs (
+        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
-        joined INTEGER DEFAULT 1,
+        reward_claimed BOOLEAN DEFAULT 0,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Payments table
+    # جدول المدفوعات
     c.execute('''CREATE TABLE IF NOT EXISTS payment_requests (
         request_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -49,12 +52,23 @@ def init_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
+    # جدول طلبات السحب
+    c.execute('''CREATE TABLE IF NOT EXISTS withdrawal_requests (
+        request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        amount REAL,
+        method TEXT,
+        account_info TEXT,
+        status TEXT DEFAULT 'pending',
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
     conn.commit()
     return conn, c
 
 conn, c = init_db()
 
-# Helper functions
+# الدوال المساعدة
 def generate_code(user_id):
     return f"C{user_id}D"
 
@@ -66,426 +80,378 @@ def check_subscription(user_id):
                 return False
         return True
     except Exception as e:
-        print(f"Subscription check error: {e}")
+        logging.error(f"خطأ في التحقق من الاشتراك: {e}")
         return False
 
-def get_user_display(user_id):
+def get_user_info(user_id):
     c.execute("SELECT username, full_name FROM users WHERE user_id = ?", (user_id,))
-    user = c.fetchone()
-    if user:
-        username, full_name = user
-        if username and username != "None":
-            return f"@{username}"
-        return full_name or "مستخدم غير معروف"
+    result = c.fetchone()
+    if result:
+        username, full_name = result
+        return f"@{username}" if username and username != "None" else full_name
     return "مستخدم غير معروف"
 
-def update_last_menu(user_id, menu_name):
-    c.execute("UPDATE users SET last_menu = ? WHERE user_id = ?", (menu_name, user_id))
-    conn.commit()
-
-def get_last_menu(user_id):
-    c.execute("SELECT last_menu FROM users WHERE user_id = ?", (user_id,))
+def get_user_balance(user_id):
+    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     result = c.fetchone()
-    return result[0] if result else None
+    return result[0] if result else 0.0
 
-# Menu functions
-def main_menu(user_id=None):
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("💰 شراء كود الربح", callback_data="buy_code"),
-        types.InlineKeyboardButton("💸 ربحني الآن", callback_data="share_link")
-    )
-    markup.row(types.InlineKeyboardButton("💳 سحب الرصيد", callback_data="withdraw"))
-    
-    if user_id:
-        update_last_menu(user_id, "main_menu")
+def update_user_balance(user_id, amount):
+    try:
+        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"خطأ في تحديث الرصيد: {e}")
+        conn.rollback()
+        return False
+
+# لوحات المفاتيح المعدلة
+def main_menu_markup():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    markup.row("💳 شراء كود الربح", "💰 سحب الأموال")
+    markup.row("📊 إحصائياتي", "📢 رابط الإحالة")
     return markup
 
-def back_button(menu_name):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"back_{menu_name}"))
+def remove_keyboard():
+    return types.ReplyKeyboardRemove()
+
+def payment_methods_markup():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    markup.row("أسيا سيل", "زين العراق")
+    markup.row("🔙 رجوع للقائمة الرئيسية")
     return markup
 
-# Bot handlers
+def withdraw_methods_markup():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    markup.row("زين العراق", "أسيا سيل")
+    markup.row("ماستر كارد/كي كارد", "عملة رقمية")
+    markup.row("🔙 رجوع للقائمة الرئيسية")
+    return markup
+
+# معالجات الأوامر المعدلة
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "None"
-    full_name = message.from_user.first_name or ""
-    if message.from_user.last_name:
-        full_name += f" {message.from_user.last_name}"
-    
-    args = message.text.split()
-    referral_code = args[1] if len(args) > 1 else None
-
-    # Check channel subscription
-    if not check_subscription(user_id):
-        keyboard = types.InlineKeyboardMarkup()
-        for channel in CHANNELS:
-            keyboard.add(types.InlineKeyboardButton(f"اشترك في {channel}", url=f"https://t.me/{channel.strip('@')}"))
-        keyboard.add(types.InlineKeyboardButton("✅ تم الاشتراك", callback_data="check_sub"))
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username or "None"
+        full_name = message.from_user.first_name
+        if message.from_user.last_name:
+            full_name += " " + message.from_user.last_name
         
-        bot.reply_to(message, 
-                    "📢 للبدء يجب الاشتراك في القنوات التالية:",
-                    reply_markup=keyboard)
-        return
+        args = message.text.split()
+        referral_code = args[1] if len(args) > 1 else None
 
-    # Register/update user
-    c.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-    if not c.fetchone():
-        c.execute("INSERT INTO users (user_id, username, full_name, code) VALUES (?, ?, ?, ?)", 
-                 (user_id, username, full_name, ""))
-        conn.commit()
+        if not check_subscription(user_id):
+            show_subscription_alert(message)
+            return
+        
+        code = generate_code(user_id)
+        c.execute("INSERT OR IGNORE INTO users (user_id, username, full_name, code) VALUES (?, ?, ?, ?)",
+                 (user_id, username, full_name, code))
+        c.execute("UPDATE users SET username = ?, full_name = ?, code = ? WHERE user_id = ?",
+                 (username, full_name, code, user_id))
         
         if referral_code and referral_code.startswith("C") and referral_code.endswith("D"):
             try:
                 referrer_id = int(referral_code[1:-1])
-                c.execute("SELECT 1 FROM users WHERE user_id = ?", (referrer_id,))
-                if c.fetchone():
-                    c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)", 
+                if referrer_id != user_id:
+                    c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)",
                              (referrer_id, user_id))
-                    c.execute("UPDATE users SET balance = balance + 0.1, referrals = referrals + 1 WHERE user_id = ?", 
-                             (referrer_id,))
-                    conn.commit()
-            except:
-                pass
+                    update_user_balance(referrer_id, 0.1)
+                    c.execute("UPDATE users SET referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
+            except Exception as e:
+                logging.error(f"خطأ في نظام الإحالة: {e}")
+        
+        conn.commit()
+        show_main_menu(message, user_id)
+    except Exception as e:
+        logging.error(f"خطأ في أمر البدء: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=remove_keyboard())
 
-    # Generate/update user code
-    user_code = generate_code(user_id)
-    c.execute("UPDATE users SET code = ?, username = ?, full_name = ? WHERE user_id = ?", 
-              (user_code, username, full_name, user_id))
-    conn.commit()
-
-    # Get user balance
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    balance = c.fetchone()[0]
-
-    # Display main menu
-    user_display = get_user_display(user_id)
-    bot.reply_to(message,
-                f"👋 أهلاً بك {user_display}\n\n"
-                f"💼 رصيدك الحالي: {balance:.2f}$\n"
-                f"🆔 كودك الخاص: {user_code}\n"
-                f"👥 أحالتك: {c.execute('SELECT COUNT(*) FROM referral_logs WHERE referrer_id = ?', (user_id,)).fetchone()[0]}",
-                reply_markup=main_menu(user_id))
+def show_subscription_alert(message):
+    markup = types.InlineKeyboardMarkup()
+    for channel in CHANNELS:
+        markup.add(types.InlineKeyboardButton(f"اشترك في {channel}", url=f"https://t.me/{channel.strip('@')}"))
+    markup.add(types.InlineKeyboardButton("✅ تم الاشتراك", callback_data="check_sub"))
+    bot.send_message(message.chat.id, "⚠️ للبدء، يجب الاشتراك في القنوات التالية:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def check_subscription_handler(call):
-    user_id = call.from_user.id
-    if check_subscription(user_id):
+def check_subscription_callback(call):
+    if check_subscription(call.from_user.id):
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        start_command(call.message)
+        show_main_menu(call.message)
     else:
-        bot.answer_callback_query(call.id, "❗ يجب الاشتراك في جميع القنوات أولاً", show_alert=True)
+        bot.answer_callback_query(call.id, "❗ لم تكمل الاشتراك في جميع القنوات", show_alert=True)
 
-@bot.callback_query_handler(func=lambda call: call.data == "buy_code")
-def buy_code_menu(call):
-    user_id = call.from_user.id
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("🔵 أسيا سيل", callback_data="pay_asiacell"),
-        types.InlineKeyboardButton("🟢 زين العراق", callback_data="pay_zain")
-    )
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_main_menu"))
-    
-    update_last_menu(user_id, "buy_code")
-    bot.edit_message_text(
-        "💳 اختر طريقة الدفع لشراء كود الاستثمار:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup
-    )
+def show_main_menu(message, user_id=None):
+    try:
+        user_id = user_id or message.from_user.id
+        c.execute("SELECT balance, code, referrals FROM users WHERE user_id = ?", (user_id,))
+        result = c.fetchone()
+        
+        if not result:
+            bot.send_message(message.chat.id, "❌ لم يتم العثور على المستخدم. يرجى استخدام /start مرة أخرى.", reply_markup=remove_keyboard())
+            return
+            
+        balance, code, referrals = result
+        
+        text = (f"مرحباً {get_user_info(user_id)} 👋\n\n"
+               f"💰 رصيدك: {balance:.2f}$\n"
+               f"🔑 كودك: {code}\n"
+               f"👥 أحالتك: {referrals}")
+        
+        bot.send_message(message.chat.id, text, reply_markup=main_menu_markup())
+    except Exception as e:
+        logging.error(f"خطأ في عرض القائمة الرئيسية: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=remove_keyboard())
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("pay_"))
-def payment_method_handler(call):
-    method = call.data.split("_")[1]
-    user_id = call.from_user.id
-    
-    update_last_menu(user_id, f"pay_{method}")
-    msg = bot.edit_message_text(
-        f"📥 لشراء كود الاستثمار:\n\n"
-        f"1. أرسل رقم رصيد {'أسيا سيل' if method == 'asiacell' else 'زين العراق'} الفعال\n"
-        f"2. سيتم التحقق تلقائياً\n"
-        f"3. بعد التأكيد يصلك كودك\n\n"
-        f"🔢 الرجاء إرسال رقم الرصيد الآن:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=back_button("buy_code")
+@bot.message_handler(func=lambda message: message.text == "🔙 رجوع للقائمة الرئيسية")
+def handle_back_command(message):
+    show_main_menu(message)
+
+@bot.message_handler(func=lambda message: message.text == "💳 شراء كود الربح")
+def handle_buy_code(message):
+    bot.send_message(message.chat.id, "💳 اختر طريقة الدفع:", reply_markup=payment_methods_markup())
+
+@bot.message_handler(func=lambda message: message.text in ["أسيا سيل", "زين العراق"])
+def handle_payment_method(message):
+    method = "asiacell" if message.text == "أسيا سيل" else "zain"
+    msg = bot.send_message(
+        message.chat.id,
+        f"🔔 طريقة الدفع: {message.text}\n\n"
+        "📌 أرسل رقم الرصيد الآن:\n"
+        "(يجب أن يكون الرصيد 2$ على الأقل)",
+        reply_markup=remove_keyboard()
     )
     bot.register_next_step_handler(msg, lambda m: process_payment(m, method))
 
 def process_payment(message, method):
-    user_id = message.from_user.id
-    phone = message.text.strip()
-    
-    if not phone.isdigit() or len(phone) < 10:
-        bot.reply_to(message, "❌ رقم غير صحيح، يرجى إرسال رقم صحيح", reply_markup=back_button("buy_code"))
-        return
-    
-    # Save payment request
-    c.execute("INSERT INTO payment_requests (user_id, phone_number, amount, payment_method) VALUES (?, ?, ?, ?)",
-              (user_id, phone, 2.0, method))
-    conn.commit()
-    
-    # Get user info
-    user_info = get_user_display(user_id)
-    user_code = generate_code(user_id)
-    
-    # Send to admin channel
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{user_id}"),
-        types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
-    )
-    
-    bot.send_message(
-        ORDER_CHANNEL,
-        f"🛒 طلب شراء كود جديد:\n\n"
-        f"👤 المستخدم: {user_info}\n"
-        f"📞 الرقم: {phone}\n"
-        f"💳 الطريقة: {'أسيا سيل' if method == 'asiacell' else 'زين العراق'}\n"
-        f"🆔 الكود: {user_code}",
-        reply_markup=markup
-    )
-    
-    # Confirm to user
-    bot.reply_to(
-        message,
-        f"📩 تم استلام طلبك:\n\n"
-        f"📱 الرقم: {phone}\n"
-        f"💳 الطريقة: {'أسيا سيل' if method == 'asiacell' else 'زين العراق'}\n\n"
-        f"⏳ جاري التحقق...",
-        reply_markup=back_button("main_menu")
-    )
+    try:
+        user_id = message.from_user.id
+        phone_number = message.text.strip()
+        
+        if not phone_number.isdigit() or len(phone_number) < 8:
+            bot.send_message(message.chat.id, "❌ رقم غير صالح. يرجى المحاولة مرة أخرى.", reply_markup=main_menu_markup())
+            return
+        
+        c.execute("INSERT INTO payment_requests (user_id, phone_number, amount, payment_method) VALUES (?, ?, ?, ?)",
+                 (user_id, phone_number, 2.0, method))
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{user_id}"),
+            types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
+        )
+        
+        admin_msg = (f"📌 طلب دفع جديد:\n\n"
+                    f"👤 المستخدم: {get_user_info(user_id)}\n"
+                    f"📱 الرقم: {phone_number}\n"
+                    f"💳 الطريقة: {message.text}\n"
+                    f"🔑 الكود: {generate_code(user_id)}")
+        
+        bot.send_message(ORDER_CHANNEL, admin_msg, reply_markup=markup)
+        bot.send_message(message.chat.id, "📬 تم استلام طلبك، جاري المراجعة...", reply_markup=main_menu_markup())
+        conn.commit()
+    except Exception as e:
+        logging.error(f"خطأ في معالجة الدفع: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=main_menu_markup())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_", "reject_")))
-def payment_decision_handler(call):
-    action, user_id = call.data.split("_")
-    user_id = int(user_id)
-    
-    if action == "approve":
-        # Generate unique link
-        invite_link = f"https://t.me/{bot.get_me().username}?start=inv_{user_id}"
+def handle_admin_decision(call):
+    try:
+        action, user_id = call.data.split("_")
+        user_id = int(user_id)
         
-        # Update database
-        c.execute("UPDATE users SET investment_link = ? WHERE user_id = ?", (invite_link, user_id))
-        c.execute("UPDATE payment_requests SET status = 'approved' WHERE user_id = ? AND status = 'pending'", (user_id,))
+        if action == "approve":
+            investment_link = f"https://t.me/{bot.get_me().username}?start=inv_{user_id}"
+            c.execute("UPDATE users SET investment_link = ? WHERE user_id = ?", (investment_link, user_id))
+            c.execute("UPDATE payment_requests SET status = 'approved' WHERE user_id = ? AND status = 'pending'", (user_id,))
+            
+            try:
+                bot.send_message(user_id, 
+                    f"🎉 تم تفعيل حسابك بنجاح!\n\n"
+                    f"🔗 رابط الإحالة الخاص بك:\n{investment_link}\n\n"
+                    f"📌 شارك الرابط مع الأصدقاء لربح المزيد",
+                    reply_markup=main_menu_markup())
+            except Exception as e:
+                logging.error(f"فشل إرسال الرسالة: {e}")
+            
+            bot.answer_callback_query(call.id, "تم القبول")
+        else:
+            c.execute("UPDATE payment_requests SET status = 'rejected' WHERE user_id = ? AND status = 'pending'", (user_id,))
+            try:
+                bot.send_message(user_id, 
+                    "❌ تم رفض طلبك، يرجى المحاولة لاحقاً",
+                    reply_markup=main_menu_markup())
+            except Exception as e:
+                logging.error(f"فشل إرسال الرسالة: {e}")
+            
+            bot.answer_callback_query(call.id, "تم الرفض")
+        
         conn.commit()
-        
-        # Notify admin
-        bot.send_message(
-            ORDER_CHANNEL,
-            f"✅ تم تفعيل كود للمستخدم {get_user_display(user_id)}\n"
-            f"🔗 الرابط: {invite_link}"
-        )
-        
-        # Send to user
-        try:
-            bot.send_message(
-                user_id,
-                f"🎉 تم تفعيل كودك بنجاح!\n\n"
-                f"🔐 كودك: {generate_code(user_id)}\n"
-                f"🔗 رابط الإحالة:\n{invite_link}\n\n"
-                f"📤 شارك الرابط لتحصل على عمولة",
-                reply_markup=main_menu(user_id)
-            )
-        except Exception as e:
-            print(f"Failed to send message: {e}")
-        
-        bot.answer_callback_query(call.id, "تم القبول")
-    else:
-        # Update database
-        c.execute("UPDATE payment_requests SET status = 'rejected' WHERE user_id = ? AND status = 'pending'", (user_id,))
-        conn.commit()
-        
-        # Notify admin
-        bot.send_message(
-            ORDER_CHANNEL,
-            f"❌ تم رفض طلب {get_user_display(user_id)}"
-        )
-        
-        # Send to user
-        try:
-            bot.send_message(
-                user_id,
-                "⚠️ تم رفض طلبك، يرجى:\n\n"
-                "1. التأكد من صحة الرصيد\n"
-                "2. التأكد من كفاية المبلغ\n"
-                "3. المحاولة مرة أخرى",
-                reply_markup=main_menu(user_id)
-            )
-        except Exception as e:
-            print(f"Failed to send message: {e}")
-        
-        bot.answer_callback_query(call.id, "تم الرفض")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception as e:
+        logging.error(f"خطأ في قرار المسؤول: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data == "share_link")
-def share_link_handler(call):
-    user_id = call.from_user.id
-    user_code = generate_code(user_id)
+@bot.message_handler(func=lambda message: message.text == "📢 رابط الإحالة")
+def handle_share_link(message):
+    user_id = message.from_user.id
+    code = generate_code(user_id)
+    link = f"https://t.me/{bot.get_me().username}?start={code}"
     
-    update_last_menu(user_id, "share_link")
-    bot.edit_message_text(
-        f"🔗 رابط الإحالة الخاص بك:\n"
-        f"https://t.me/{bot.get_me().username}?start={user_code}\n\n"
-        f"📤 شارك الرابط لتحصل على:\n"
-        f"- 0.1$ لكل اشتراك\n"
-        f"- 0.5$ لكل عملية شراء\n"
-        f"- أرباح متزايدة",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=back_button("main_menu")
-    )
+    text = (f"🔗 رابط الإحالة الخاص بك:\n{link}\n\n"
+           f"📌 شارك هذا الرابط مع أصدقائك:\n"
+           f"- 0.1$ لكل تسجيل جديد\n"
+           f"- 0.5$ لكل عملية شراء\n"
+           f"- أرباح غير محدودة!")
+    
+    bot.send_message(message.chat.id, text, reply_markup=main_menu_markup())
 
-@bot.callback_query_handler(func=lambda call: call.data == "withdraw")
-def withdraw_handler(call):
-    user_id = call.from_user.id
+@bot.message_handler(func=lambda message: message.text == "💰 سحب الأموال")
+def handle_withdraw(message):
+    user_id = message.from_user.id
+    balance = get_user_balance(user_id)
     
-    update_last_menu(user_id, "withdraw")
-    msg = bot.edit_message_text(
-        "💸 لسحب أموالك:\n\n"
-        "1. تأكد أن رصيدك 2$ كحد أدنى\n"
-        "2. أكتب كودك للتحقق\n\n"
-        "🔢 الرجاء إرسال الكود الآن:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=back_button("main_menu")
+    if balance < 2.0:
+        bot.send_message(message.chat.id, "❗ الحد الأدنى للسحب 2$", reply_markup=main_menu_markup())
+        return
+    
+    msg = bot.send_message(
+        message.chat.id,
+        "📤 لسحب الأموال:\n\n"
+        "أرسل كود الربح الخاص بك للتأكيد:",
+        reply_markup=remove_keyboard()
     )
     bot.register_next_step_handler(msg, verify_withdraw_code)
 
 def verify_withdraw_code(message):
-    user_id = message.from_user.id
-    input_code = message.text.strip()
-    user_code = generate_code(user_id)
-    
-    if input_code != user_code:
-        bot.reply_to(message, "❌ الكود غير صحيح", reply_markup=back_button("main_menu"))
-        return
-    
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    balance = c.fetchone()[0]
-    
-    if balance < 2.0:
-        bot.reply_to(message, "⚠️ الرصيد غير كافي (2$ حد أدنى)", reply_markup=main_menu(user_id))
-        return
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("🔵 أسيا سيل", callback_data="withdraw_asiacell"),
-        types.InlineKeyboardButton("🟢 زين العراق", callback_data="withdraw_zain")
-    )
-    markup.row(
-        types.InlineKeyboardButton("💳 كي كارد", callback_data="withdraw_card"),
-        types.InlineKeyboardButton("💰 كريبتو", callback_data="withdraw_crypto")
-    )
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back_main_menu"))
-    
-    update_last_menu(user_id, "withdraw_method")
-    bot.reply_to(
-        message,
-        f"💵 رصيدك: {balance:.2f}$\n\n"
-        f"اختر طريقة السحب:",
-        reply_markup=markup
-    )
+    try:
+        user_id = message.from_user.id
+        user_code = generate_code(user_id)
+        
+        if message.text.strip() == user_code:
+            bot.send_message(
+                message.chat.id,
+                "💰 اختر طريقة السحب:",
+                reply_markup=withdraw_methods_markup()
+            )
+        else:
+            bot.send_message(
+                message.chat.id,
+                "❌ الكود غير صحيح",
+                reply_markup=main_menu_markup()
+            )
+    except Exception as e:
+        logging.error(f"خطأ في التحقق من الكود: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=main_menu_markup())
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("withdraw_"))
-def withdraw_method_handler(call):
-    method = call.data.split("_")[1]
-    user_id = call.from_user.id
+@bot.message_handler(func=lambda message: message.text in ["زين العراق", "أسيا سيل", "ماستر كارد/كي كارد", "عملة رقمية"])
+def handle_withdraw_method(message):
+    method = {
+        "زين العراق": "zain",
+        "أسيا سيل": "asiacell",
+        "ماستر كارد/كي كارد": "card",
+        "عملة رقمية": "crypto"
+    }[message.text]
     
-    method_names = {
-        "asiacell": "أسيا سيل",
-        "zain": "زين العراق",
-        "card": "ماستر/كي كارد",
-        "crypto": "عملة رقمية"
-    }
-    
-    update_last_menu(user_id, f"withdraw_{method}")
-    msg = bot.edit_message_text(
-        f"📤 لسحب الأموال عبر {method_names[method]}:\n\n"
-        f"1. تأكد من صحة المعلومات\n"
-        f"2. أرسل رقم {method_names[method]} للاستلام\n\n"
-        f"🔢 الرجاء إرسال المعلومات الآن:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=back_button("withdraw")
+    msg = bot.send_message(
+        message.chat.id,
+        f"📤 أرسل معلومات {message.text} للسحب:",
+        reply_markup=remove_keyboard()
     )
     bot.register_next_step_handler(msg, lambda m: process_withdraw(m, method))
 
 def process_withdraw(message, method):
-    user_id = message.from_user.id
-    account_info = message.text.strip()
-    
-    c.execute("SELECT balance, code FROM users WHERE user_id = ?", (user_id,))
-    balance, user_code = c.fetchone()
-    
-    method_names = {
-        "asiacell": "أسيا سيل",
-        "zain": "زين العراق",
-        "card": "ماستر/كي كارد",
-        "crypto": "عملة رقمية"
-    }
-    
-    # Send to admin
-    bot.send_message(
-        ORDER_CHANNEL,
-        f"📤 طلب سحب جديد:\n\n"
-        f"👤 المستخدم: {get_user_display(user_id)}\n"
-        f"💵 المبلغ: {balance:.2f}$\n"
-        f"🆔 الكود: {user_code}\n"
-        f"💳 الطريقة: {method_names[method]}\n"
-        f"📝 المعلومات: {account_info}"
-    )
-    
-    # Confirm to user
-    bot.reply_to(
-        message,
-        f"📬 تم استلام طلبك:\n\n"
-        f"💵 المبلغ: {balance:.2f}$\n"
-        f"💳 الطريقة: {method_names[method]}\n\n"
-        f"⏳ سيتم التحويل خلال 24 ساعة",
-        reply_markup=main_menu(user_id)
-    )
+    try:
+        user_id = message.from_user.id
+        account_info = message.text.strip()
+        balance = get_user_balance(user_id)
+        
+        if method in ["zain", "asiacell"] and not account_info.isdigit():
+            bot.send_message(message.chat.id, "❌ رقم حساب غير صالح لهذه الطريقة", reply_markup=main_menu_markup())
+            return
+        
+        c.execute("INSERT INTO withdrawal_requests (user_id, amount, method, account_info) VALUES (?, ?, ?, ?)",
+                 (user_id, balance, method, account_info))
+        
+        if not update_user_balance(user_id, -balance):
+            raise Exception("فشل في تحديث الرصيد")
+        
+        admin_msg = (f"📤 طلب سحب جديد:\n\n"
+                    f"👤 المستخدم: {get_user_info(user_id)}\n"
+                    f"💵 المبلغ: {balance:.2f}$\n"
+                    f"💳 الطريقة: {method}\n"
+                    f"📝 المعلومات: {account_info}")
+        
+        bot.send_message(ORDER_CHANNEL, admin_msg)
+        bot.send_message(
+            message.chat.id,
+            f"✅ تم استلام طلب السحب\n"
+            f"⏳ جاري المعالجة خلال 24 ساعة",
+            reply_markup=main_menu_markup()
+        )
+        conn.commit()
+    except Exception as e:
+        logging.error(f"خطأ في معالجة السحب: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=main_menu_markup())
 
-# Back button handler
-@bot.callback_query_handler(func=lambda call: call.data.startswith("back_"))
-def back_handler(call):
-    user_id = call.from_user.id
-    target_menu = call.data.split("_")[1]
-    
-    if target_menu == "main_menu":
-        start_command(call.message)
-    elif target_menu == "buy_code":
-        buy_code_menu(call)
-    elif target_menu == "withdraw":
-        withdraw_handler(call)
-    else:
-        last_menu = get_last_menu(user_id)
-        if last_menu == "buy_code":
-            buy_code_menu(call)
-        elif last_menu == "withdraw":
-            withdraw_handler(call)
-        else:
-            start_command(call.message)
+@bot.message_handler(func=lambda message: message.text == "📊 إحصائياتي")
+def handle_stats(message):
+    try:
+        user_id = message.from_user.id
+        c.execute("SELECT balance, referrals, joined_date FROM users WHERE user_id = ?", (user_id,))
+        result = c.fetchone()
+        
+        if not result:
+            bot.send_message(message.chat.id, "❌ لم يتم العثور على المستخدم", reply_markup=main_menu_markup())
+            return
+            
+        balance, referrals, join_date = result
+        
+        c.execute("SELECT COUNT(*) FROM referral_logs WHERE referrer_id = ?", (user_id,))
+        total_refs = c.fetchone()[0]
+        
+        text = (f"📊 إحصائياتك:\n\n"
+               f"💰 الرصيد: {balance:.2f}$\n"
+               f"👥 أحالتك: {referrals}\n"
+               f"📅 تاريخ الانضمام: {join_date[:10]}\n"
+               f"🔗 إجمالي الإحالات: {total_refs}")
+        
+        bot.send_message(message.chat.id, text, reply_markup=main_menu_markup())
+    except Exception as e:
+        logging.error(f"خطأ في الإحصائيات: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ. يرجى المحاولة مرة أخرى.", reply_markup=main_menu_markup())
 
-# Flask routes
+# مسارات Flask
 @app.route('/' + TOKEN, methods=['POST'])
-def webhook_handler():
-    json_update = request.stream.read().decode('utf-8')
-    update = types.Update.de_json(json_update)
-    bot.process_new_updates([update])
-    return '!', 200
+def bot_webhook():
+    try:
+        json_data = request.get_data().decode('utf-8')
+        update = types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"خطأ في webhook: {e}")
+        return "Error", 500
 
 @app.route('/')
 def set_webhook():
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
-    return 'Webhook set!', 200
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f'https://invite2earnn.onrender.com/{TOKEN}')
+        return "تم إعداد Webhook!", 200
+    except Exception as e:
+        logging.error(f"خطأ في إعداد webhook: {e}")
+        return "خطأ في إعداد webhook", 500
 
 if __name__ == '__main__':
-    print("🤖 Bot is running...")
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
-    app.run(host="0.0.0.0", port=5000)
+    try:
+        print("البوت يعمل...")
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f'https://invite2earnn.onrender.com/{TOKEN}')
+        app.run(host="0.0.0.0", port=5000)
+    except Exception as e:
+        logging.error(f"خطأ رئيسي: {e}")
