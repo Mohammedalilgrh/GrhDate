@@ -6,7 +6,7 @@ import sqlite3
 import time
 
 app = Flask(__name__)
-TOKEN = '7897542906:AAGn878y8jEqD3eG55kIHpTNoe8lKnTOKco'
+TOKEN = '7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g'
 CHANNEL_USERNAME = "@intearnn"
 ORDER_CHANNEL = "@intorders"
 bot = telebot.TeleBot(TOKEN)
@@ -226,12 +226,12 @@ def get_message():
 def webhook():
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url='https://invite2earnn.onrender.com/TOKEN')
+    bot.set_webhook(url='https://invite2earnn.onrender.com/+ 7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
     return 'Webhook set!', 200
 
 if __name__ == '__main__':
     print("Bot is running...")
     bot.remove_webhook()
     time.sleep(1)
-    bot.set_webhook(url='https://invite2earnn.onrender.com/+TOKEN')
+    bot.set_webhook(url='https://invite2earnn.onrender.com/+ 7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
     app.run(host="0.0.0.0", port=5000)
