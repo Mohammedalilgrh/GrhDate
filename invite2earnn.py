@@ -7,16 +7,16 @@ import time
 import logging
 from datetime import datetime
 
-# تهيئة التطبيق
+# Initialize the app
 app = Flask(__name__)
 TOKEN = '7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g'
-CHANNELS = ["@intearnn", "@s111sgrh"]  # القنوات المطلوبة
+CHANNELS = ["@intearnn", "@s111sgrh"]  # Required channels
 ORDER_CHANNEL = "@intorders"
-ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"  # أضف أي دي الأدمن هنا
+ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"  # Add admin ID here
 bot = telebot.TeleBot(TOKEN)
 logging.basicConfig(level=logging.INFO)
 
-# النصوص العربية
+# Arabic texts
 TEXTS = {
     'start': "أهلاً بك {name} 👋\n\n💰 رصيدك الحالي: {balance:.2f}$\n👥 عدد الإحالات: {refs}\n\n📌 اختر من القائمة:",
     'not_subscribed': "⚠️ للبدء، يرجى الانضمام إلى قنواتنا:",
@@ -27,7 +27,7 @@ TEXTS = {
     'payment_methods': ["💳 آسيا سيل", "💳 زين العراق"],
     'withdraw_methods': ["💳 زين العراق", "💳 آسيا سيل", "💳 ماستركارد/كي نت", "💳 كريبتو"],
     'already_purchased': "✅ لديك بالفعل كود إحالة نشط\n\n🔗 يمكنك مشاركة هذا الرابط:\n{link}\n\n💰 ستربح 0.1$ لكل إحالة جديدة",
-    'purchase_info': "💳 لشراء كود الإحالة:\n\nسعر الكود: 2$\nيمنحك الحق في:\n- ربح 0.1$ لكل إحالة جديدة\n- مشاركة رابطك الخاص لربح المزيد\n\nاختر طريقة الدفع:",
+    'purchase_info': "💳 لشراء كود الإحالة:\n\n🚀 ارفع رصيد أبو ال2$ فعّال لشراء كود الاستثمار الخاص بك\n💰 للربح عبر مشاركته فقط 0.10$ لكل شخص\n\n📌 سيتم التحقق تلقائياً من رصيد الرقم المرفق\n❌ أي خطأ بالرصيد سيؤدي لرفض العملية",
     'enter_phone': "🔔 طريقة الدفع: {method}\n\n📌 يرجى إرسال رقم هاتفك:\n(يجب أن يحتوي على رصيد 2$ على الأقل)",
     'invalid_phone': "❌ رقم غير صحيح، يرجى المحاولة مرة أخرى",
     'payment_request_sent': "📬 تم استلام طلبك، قيد المراجعة...",
@@ -41,39 +41,42 @@ TEXTS = {
     'withdraw_request_sent': "✅ تم استلام طلب السحب\n\n⏳ جاري المعالجة خلال 24 ساعة\n📌 سيتم إعلامك عند الانتهاء",
     'stats': "📊 إحصائياتك:\n\n💰 الرصيد الحالي: {balance:.2f}$\n👥 الإحالات النشطة: {refs}\n🔗 إجمالي الإحالات: {total_refs}\n📅 تاريخ الانضمام: {join_date}\n🔑 كود الإحالة: {status}",
     'refresh_success': "✅ تم تحديث البيانات بنجاح",
-    'error': "❌ حدث خطأ، يرجى المحاولة لاحقاً"
+    'error': "❌ حدث خطأ، يرجى المحاولة لاحقاً",
+    'new_referral': "🎉 حصلت على 0.10$ مقابل إحالة جديدة!\n\n👤 المستخدم: {user}\n💰 رصيدك الجديد: {balance:.2f}$"
 }
 
-# إعداد قاعدة البيانات المحسنة
+# Enhanced database setup
 def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     
-    # جدول المستخدمين مع تحسينات
+    # Users table with improvements
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         full_name TEXT,
         code TEXT UNIQUE,
         balance REAL DEFAULT 0.0,
-        referrals INTEGER DEFAULT 0,
+        free_referrals INTEGER DEFAULT 0,
+        paid_referrals INTEGER DEFAULT 0,
         has_purchased BOOLEAN DEFAULT 0,
         joined_date DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_active DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # جدول الإحالات مع تحسينات التتبع
+    # Referrals tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS referral_logs (
         log_id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER UNIQUE,
+        is_paid BOOLEAN DEFAULT 0,
         reward_claimed BOOLEAN DEFAULT 0,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(referrer_id) REFERENCES users(user_id),
         FOREIGN KEY(referred_id) REFERENCES users(user_id)
     )''')
     
-    # جدول المدفوعات مع تحسينات التتبع
+    # Payment tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS payment_requests (
         request_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -85,7 +88,7 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(user_id)
     )''')
     
-    # جدول طلبات السحب مع تحسينات التتبع
+    # Withdrawal tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS withdrawal_requests (
         request_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -102,7 +105,7 @@ def init_db():
 
 conn, c = init_db()
 
-# الدوال المساعدة
+# Helper functions
 def generate_code(user_id):
     return f"PAID_{user_id}_{int(time.time())}"
 
@@ -114,7 +117,7 @@ def check_subscription(user_id):
                 return False
         return True
     except Exception as e:
-        logging.error(f"خطأ في التحقق من الاشتراك: {e}")
+        logging.error(f"Subscription check error: {e}")
         return False
 
 def get_user_info(user_id):
@@ -123,7 +126,7 @@ def get_user_info(user_id):
     if result:
         username, full_name = result
         return f"@{username}" if username and username != "None" else full_name
-    return "مستخدم غير معروف"
+    return "Unknown User"
 
 def update_user_activity(user_id):
     c.execute("UPDATE users SET last_active = ? WHERE user_id = ?", 
@@ -135,7 +138,7 @@ def get_user_balance(user_id):
     result = c.fetchone()
     return result[0] if result else 0.0
 
-# لوحات المفاتيح
+# Keyboards
 def main_menu_markup():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     markup.row(TEXTS['main_menu'][0], TEXTS['main_menu'][1])
@@ -155,7 +158,7 @@ def withdraw_methods_markup():
     markup.row(TEXTS['back_menu'])
     return markup
 
-# معالجات الأوامر
+# Command handlers
 @bot.message_handler(commands=['start', 'restart'])
 def start_command(message):
     try:
@@ -165,12 +168,17 @@ def start_command(message):
         if message.from_user.last_name:
             full_name += f" {message.from_user.last_name}"
 
-        # التحقق من الاشتراك
+        # Check for referral link
+        referral_code = None
+        if len(message.text.split()) > 1:
+            referral_code = message.text.split()[1]
+
+        # Check subscription
         if not check_subscription(user_id):
             show_subscription_alert(message)
             return
 
-        # تسجيل/تحديث المستخدم
+        # Register/update user
         code = generate_code(user_id)
         c.execute("""
             INSERT OR IGNORE INTO users (user_id, username, full_name, code) 
@@ -185,12 +193,36 @@ def start_command(message):
             WHERE user_id = ?
             """, (username, full_name, datetime.now(), user_id))
         
+        # Process referral if exists
+        if referral_code:
+            try:
+                referrer_id = int(referral_code.split('_')[1])
+                c.execute("INSERT OR IGNORE INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)",
+                         (referrer_id, user_id))
+                
+                # Add reward to referrer
+                c.execute("UPDATE users SET balance = balance + 0.1, free_referrals = free_referrals + 1 WHERE user_id = ?",
+                         (referrer_id,))
+                
+                # Notify referrer
+                try:
+                    bot.send_message(referrer_id, 
+                                   TEXTS['new_referral'].format(
+                                       user=get_user_info(user_id),
+                                       balance=get_user_balance(referrer_id)
+                                   ))
+                except:
+                    pass
+                
+            except Exception as e:
+                logging.error(f"Referral processing error: {e}")
+
         conn.commit()
         show_main_menu(message)
         update_user_activity(user_id)
         
     except Exception as e:
-        logging.error(f"خطأ في أمر البدء: {e}")
+        logging.error(f"Start command error: {e}")
         bot.send_message(message.chat.id, 
                         TEXTS['error'],
                         reply_markup=types.ReplyKeyboardRemove())
@@ -198,7 +230,7 @@ def start_command(message):
 def show_subscription_alert(message):
     markup = types.InlineKeyboardMarkup()
     for channel in CHANNELS:
-        markup.add(types.InlineKeyboardButton(f"اشترك في {channel}", url=f"https://t.me/{channel.strip('@')}"))
+        markup.add(types.InlineKeyboardButton(f"Join {channel}", url=f"https://t.me/{channel.strip('@')}"))
     markup.add(types.InlineKeyboardButton(TEXTS['subscription_done'], callback_data="check_sub"))
     bot.send_message(message.chat.id, TEXTS['not_subscribed'], reply_markup=markup)
 
@@ -235,7 +267,7 @@ def handle_purchase_request(message):
         update_user_activity(user_id)
         
     except Exception as e:
-        logging.error(f"خطأ في طلب الشراء: {e}")
+        logging.error(f"Purchase request error: {e}")
         bot.send_message(
             message.chat.id,
             TEXTS['error'],
@@ -261,28 +293,38 @@ def process_payment(message, method):
             bot.send_message(message.chat.id, TEXTS['invalid_phone'], reply_markup=main_menu_markup())
             return
         
-        # تسجيل طلب الدفع
+        # Simulate balance check (in reality you'd need API integration)
+        has_sufficient_balance = True  # Default for demo
+        
+        if not has_sufficient_balance:
+            bot.send_message(message.chat.id,
+                           "❌ Insufficient balance! Please use a number with at least 2$",
+                           reply_markup=main_menu_markup())
+            return
+        
+        # Register payment request
         c.execute("INSERT INTO payment_requests (user_id, phone_number, amount, payment_method) VALUES (?, ?, ?, ?)",
                  (user_id, phone, 2.0, method))
         
-        # إرسال طلب الموافقة للمسؤول
+        # Send approval request to admin
         markup = types.InlineKeyboardMarkup()
         markup.row(
-            types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{user_id}"),
-            types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
+            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
+            types.InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
         )
         
-        admin_msg = (f"📌 طلب شراء كود إحالة جديد:\n\n"
-                    f"👤 المستخدم: {get_user_info(user_id)}\n"
-                    f"📱 الرقم: {phone}\n"
-                    f"💳 الطريقة: {message.text}\n"
-                    f"🆔 كود المستخدم: {generate_code(user_id)}")
+        admin_msg = (f"📌 New referral code purchase request:\n\n"
+                    f"👤 User: {get_user_info(user_id)}\n"
+                    f"📱 Phone: {phone}\n"
+                    f"💳 Method: {message.text}\n"
+                    f"💰 Balance: Sufficient (simulated)\n"
+                    f"🆔 User code: {generate_code(user_id)}")
         
         bot.send_message(ORDER_CHANNEL, admin_msg, reply_markup=markup)
         bot.send_message(user_id, TEXTS['payment_request_sent'], reply_markup=main_menu_markup())
         conn.commit()
     except Exception as e:
-        logging.error(f"خطأ في معالجة الدفع: {e}")
+        logging.error(f"Payment processing error: {e}")
         bot.send_message(message.chat.id, TEXTS['error'], reply_markup=main_menu_markup())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_", "reject_")))
@@ -292,41 +334,45 @@ def handle_admin_decision(call):
         user_id = int(user_id)
         
         if action == "approve":
-            # تفعيل كود الإحالة للمستخدم
+            # Activate referral code for user
+            code = generate_code(user_id)
             c.execute("UPDATE users SET has_purchased = 1 WHERE user_id = ?", (user_id,))
             
-            # إنشاء رابط الإحالة
-            code = generate_code(user_id)
+            # Create referral link
             referral_link = f"https://t.me/{bot.get_me().username}?start={code}"
             
-            # إعلام المستخدم
+            # Send code to channel
+            bot.send_message(ORDER_CHANNEL, 
+                           f"🆔 New referral code:\n\n👤 User: {get_user_info(user_id)}\n🔑 Code: {code}\n🔗 Link: {referral_link}")
+            
+            # Notify user
             try:
                 bot.send_message(user_id,
                                 TEXTS['payment_approved'].format(link=referral_link),
                                 reply_markup=main_menu_markup())
             except Exception as e:
-                logging.error(f"فشل إرسال الرسالة: {e}")
+                logging.error(f"Message sending failed: {e}")
             
-            bot.answer_callback_query(call.id, "تم قبول الطلب")
+            bot.answer_callback_query(call.id, "Request approved")
         else:
-            # رفض الطلب
+            # Reject request
             try:
                 bot.send_message(user_id,
                                TEXTS['payment_rejected'],
                                reply_markup=main_menu_markup())
             except Exception as e:
-                logging.error(f"فشل إرسال الرسالة: {e}")
+                logging.error(f"Message sending failed: {e}")
             
-            bot.answer_callback_query(call.id, "تم رفض الطلب")
+            bot.answer_callback_query(call.id, "Request rejected")
         
-        # تحديث حالة الطلب
+        # Update request status
         c.execute("UPDATE payment_requests SET status = ? WHERE user_id = ? AND status = 'pending'",
                  ('approved' if action == 'approve' else 'rejected', user_id))
         conn.commit()
         
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except Exception as e:
-        logging.error(f"خطأ في قرار المسؤول: {e}")
+        logging.error(f"Admin decision error: {e}")
 
 @bot.message_handler(func=lambda message: message.text == TEXTS['main_menu'][1])
 def handle_withdraw_request(message):
@@ -346,7 +392,7 @@ def handle_withdraw_request(message):
         bot.register_next_step_handler(msg, verify_withdraw_code)
         
     except Exception as e:
-        logging.error(f"خطأ في طلب السحب: {e}")
+        logging.error(f"Withdrawal request error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -366,7 +412,7 @@ def verify_withdraw_code(message):
                            reply_markup=main_menu_markup())
             
     except Exception as e:
-        logging.error(f"خطأ في التحقق من كود السحب: {e}")
+        logging.error(f"Withdrawal code verification error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -390,7 +436,7 @@ def handle_withdraw_method(message):
         bot.register_next_step_handler(msg, lambda m: process_withdraw(m, method))
         
     except Exception as e:
-        logging.error(f"خطأ في اختيار طريقة السحب: {e}")
+        logging.error(f"Withdrawal method selection error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -401,31 +447,31 @@ def process_withdraw(message, method):
         account_info = message.text.strip()
         balance = get_user_balance(user_id)
         
-        # التحقق من صحة المعلومات حسب طريقة السحب
+        # Validate info based on withdrawal method
         if method in ["zain", "asiacell"] and not account_info.isdigit():
             bot.send_message(message.chat.id,
                            TEXTS['invalid_phone'],
                            reply_markup=main_menu_markup())
             return
         
-        # تسجيل طلب السحب
+        # Register withdrawal request
         c.execute("INSERT INTO withdrawal_requests (user_id, amount, method, account_info) VALUES (?, ?, ?, ?)",
                  (user_id, balance, method, account_info))
         
-        # خصم المبلغ من رصيد المستخدم
+        # Deduct from user balance
         c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?",
                  (balance, user_id))
         
-        # إرسال إشعار للمسؤول
-        admin_msg = (f"📌 طلب سحب جديد:\n\n"
-                    f"👤 المستخدم: {get_user_info(user_id)}\n"
-                    f"💵 المبلغ: {balance:.2f}$\n"
-                    f"💳 الطريقة: {method}\n"
-                    f"📝 المعلومات: {account_info}")
+        # Send notification to admin
+        admin_msg = (f"📌 New withdrawal request:\n\n"
+                    f"👤 User: {get_user_info(user_id)}\n"
+                    f"💵 Amount: {balance:.2f}$\n"
+                    f"💳 Method: {method}\n"
+                    f"📝 Info: {account_info}")
         
         bot.send_message(ORDER_CHANNEL, admin_msg)
         
-        # إعلام المستخدم
+        # Notify user
         bot.send_message(message.chat.id,
                        TEXTS['withdraw_request_sent'],
                        reply_markup=main_menu_markup())
@@ -433,7 +479,7 @@ def process_withdraw(message, method):
         conn.commit()
         
     except Exception as e:
-        logging.error(f"خطأ في معالجة السحب: {e}")
+        logging.error(f"Withdrawal processing error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -443,9 +489,9 @@ def handle_user_stats(message):
     try:
         user_id = message.from_user.id
         
-        # الحصول على بيانات المستخدم
+        # Get user data
         c.execute("""
-            SELECT balance, referrals, has_purchased, joined_date 
+            SELECT balance, free_referrals, paid_referrals, has_purchased, joined_date 
             FROM users WHERE user_id = ?
             """, (user_id,))
         result = c.fetchone()
@@ -456,18 +502,18 @@ def handle_user_stats(message):
                            reply_markup=main_menu_markup())
             return
             
-        balance, referrals, has_purchased, join_date = result
+        balance, free_refs, paid_refs, has_purchased, join_date = result
         
-        # حساب إجمالي الإحالات
+        # Calculate total referrals
         c.execute("SELECT COUNT(*) FROM referral_logs WHERE referrer_id = ?", (user_id,))
         total_refs = c.fetchone()[0]
         
-        status = "✅ مفعل" if has_purchased else "❌ غير مفعل"
+        status = "✅ Active" if has_purchased else "❌ Inactive"
         
-        # إعداد رسالة الإحصائيات
+        # Prepare stats message
         stats_msg = TEXTS['stats'].format(
             balance=balance,
-            refs=referrals,
+            refs=free_refs + paid_refs,
             total_refs=total_refs,
             join_date=join_date[:10],
             status=status
@@ -478,7 +524,7 @@ def handle_user_stats(message):
                        reply_markup=main_menu_markup())
         
     except Exception as e:
-        logging.error(f"خطأ في عرض الإحصائيات: {e}")
+        logging.error(f"Stats display error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -492,7 +538,7 @@ def handle_refresh(message):
                         TEXTS['refresh_success'],
                         reply_markup=main_menu_markup())
     except Exception as e:
-        logging.error(f"خطأ في تحديث البيانات: {e}")
+        logging.error(f"Refresh error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=main_menu_markup())
@@ -506,8 +552,8 @@ def show_main_menu(message):
         user_id = message.from_user.id
         update_user_activity(user_id)
         
-        # الحصول على بيانات المستخدم
-        c.execute("SELECT balance, referrals FROM users WHERE user_id = ?", (user_id,))
+        # Get user data
+        c.execute("SELECT balance, free_referrals, paid_referrals FROM users WHERE user_id = ?", (user_id,))
         result = c.fetchone()
         
         if not result:
@@ -516,13 +562,13 @@ def show_main_menu(message):
                            reply_markup=types.ReplyKeyboardRemove())
             return
             
-        balance, referrals = result
+        balance, free_refs, paid_refs = result
         
-        # إعداد رسالة الترحيب
+        # Prepare welcome message
         welcome_msg = TEXTS['start'].format(
             name=get_user_info(user_id),
             balance=balance,
-            refs=referrals
+            refs=free_refs + paid_refs
         )
         
         bot.send_message(message.chat.id,
@@ -530,12 +576,12 @@ def show_main_menu(message):
                        reply_markup=main_menu_markup())
         
     except Exception as e:
-        logging.error(f"خطأ في عرض القائمة الرئيسية: {e}")
+        logging.error(f"Main menu display error: {e}")
         bot.send_message(message.chat.id,
                         TEXTS['error'],
                         reply_markup=types.ReplyKeyboardRemove())
 
-# مسارات Flask
+# Flask routes
 @app.route('/' + TOKEN, methods=['POST'])
 def bot_webhook():
     try:
@@ -544,7 +590,7 @@ def bot_webhook():
         bot.process_new_updates([update])
         return "OK", 200
     except Exception as e:
-        logging.error(f"خطأ في webhook: {e}")
+        logging.error(f"Webhook error: {e}")
         return "Error", 500
 
 @app.route('/')
@@ -553,17 +599,17 @@ def set_webhook():
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
-        return "تم إعداد Webhook بنجاح!", 200
+        return "Webhook setup successfully!", 200
     except Exception as e:
-        logging.error(f"خطأ في إعداد webhook: {e}")
-        return "فشل إعداد Webhook", 500
+        logging.error(f"Webhook setup error: {e}")
+        return "Webhook setup failed", 500
 
 if __name__ == '__main__':
     try:
-        print("🚀 البوت يعمل الآن...")
+        print("🚀 Bot is running...")
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
         app.run(host="0.0.0.0", port=5000)
     except Exception as e:
-        logging.error(f"خطأ رئيسي: {e}")
+        logging.error(f"Main error: {e}")
