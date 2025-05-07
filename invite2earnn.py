@@ -6,6 +6,7 @@ import sqlite3
 import time
 import logging
 from datetime import datetime
+import random
 
 # Initialize app
 app = Flask(__name__)
@@ -16,12 +17,53 @@ ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID"
 bot = telebot.TeleBot(TOKEN)
 logging.basicConfig(level=logging.INFO)
 
+# Mixed English/Arabic texts
+TEXTS = {
+    'welcome': "🌟 Welcome {name} | أهلاً بك {name} 🌟\n\n💰 Balance/Raqid: ${balance:.2f}\n👥 Referrals/إحالات: {refs}",
+    'not_subscribed': "⚠️ Join our channels first | انضم لقنواتنا أولاً:\n{channels}",
+    'subscription_done': "✅ Done | تم",
+    'main_menu': [
+        "💳 Buy Code/شراء كود", 
+        "💰 Withdraw/سحب", 
+        "📊 Stats/إحصائيات", 
+        "🔄 Refresh/تحديث"
+    ],
+    'payment_methods': [
+        "💳 AsiaCell/آسيا سيل", 
+        "💳 Zain Iraq/زين العراق"
+    ],
+    'withdraw_methods': [
+        "💳 Zain Iraq/زين العراق", 
+        "💳 AsiaCell/آسيا سيل",
+        "💳 Card/بطاقة", 
+        "💳 Crypto/كريبتو"
+    ],
+    'back_menu': "🔙 Main Menu/القائمة",
+    'already_purchased': "🎉 You already have a code! | لديك كود بالفعل!\n\n🔗 Your link:\n{link}\n\n💰 Earn $0.10 per referral | اربح 0.10$ لكل إحالة",
+    'purchase_info': "💳 Buy referral code | شراء كود إحالة\n\n💰 Price/Sa'er: $2\n🔗 Earn $0.10 per referral | اربح 0.10$ لكل إحالة\n\nChoose payment method | اختر طريقة الدفع:",
+    'enter_phone': "📱 Send your phone number | أرسل رقمك:\n(Must have $2 balance | يجب أن يحتوي على 2$)",
+    'invalid_phone': "❌ Invalid number | رقم غير صحيح",
+    'payment_request_sent': "📬 Request received | تم استلام الطلب\n⏳ Under review | قيد المراجعة",
+    'payment_approved': "🎉 Code activated! | تم تفعيل الكود!\n\n🔗 Your link:\n{link}\n\n💰 Earn $0.10 per referral | اربح 0.10$ لكل إحالة",
+    'payment_rejected': "❌ Request rejected | تم الرفض\nPlease try again | حاول لاحقاً",
+    'min_withdraw': "❗ Minimum $2 to withdraw | الحد الأدنى 2$\nGet more referrals | احصل على المزيد من الإحالات",
+    'verify_code': "🔐 Enter your code | أدخل كودك:",
+    'invalid_code': "❌ Wrong code | كود خاطئ",
+    'choose_withdraw': "💸 Choose method | اختر طريقة:",
+    'enter_withdraw_details': "📤 Send {method} details | أرسل بيانات {method}:",
+    'withdraw_request_sent': "✅ Request sent | تم الإرسال\n⏳ Processing in 24h | جاري المعالجة",
+    'stats': "📊 Your stats | إحصائياتك:\n\n💰 Balance/Raqid: ${balance:.2f}\n👥 Active referrals/إحالات نشطة: {refs}\n🔗 Total referrals/مجموع الإحالات: {total_refs}\n📅 Joined/انضم في: {join_date}\n🔑 Status/حالة: {status}",
+    'refresh_success': "🔄 Refreshed | تم التحديث",
+    'error': "❌ Error | خطأ\nTry again | حاول لاحقاً",
+    'referral_bonus': "🎊 New referral! | إحالة جديدة!\n+$0.10 added to your balance | تم إضافة 0.10$ لرصيدك",
+    'referral_welcome': "👋 You joined via {name}'s link | انضمتم عبر رابط {name}\n💰 They earned $0.10 | لقد ربحوا 0.10$"
+}
+
 # Enhanced database setup
 def init_db():
     conn = sqlite3.connect("data.db", check_same_thread=False)
     c = conn.cursor()
     
-    # Users table with improvements
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
@@ -31,10 +73,10 @@ def init_db():
         referrals INTEGER DEFAULT 0,
         has_purchased BOOLEAN DEFAULT 0,
         joined_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+        last_active DATETIME DEFAULT CURRENT_TIMESTAMP,
+        referrer_id INTEGER DEFAULT NULL
     )''')
     
-    # Referrals tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS referral_logs (
         log_id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
@@ -45,7 +87,6 @@ def init_db():
         FOREIGN KEY(referred_id) REFERENCES users(user_id)
     )''')
     
-    # Payments tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS payment_requests (
         request_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -57,7 +98,6 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(user_id)
     )''')
     
-    # Withdrawals tracking table
     c.execute('''CREATE TABLE IF NOT EXISTS withdrawal_requests (
         request_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -76,7 +116,7 @@ conn, c = init_db()
 
 # Helper functions
 def generate_code(user_id):
-    return f"PAID_{user_id}_{int(time.time())}"
+    return f"REF{user_id}_{int(time.time())}"
 
 def check_subscription(user_id):
     try:
@@ -107,24 +147,63 @@ def get_user_balance(user_id):
     result = c.fetchone()
     return result[0] if result else 0.0
 
+def process_referral(referrer_id, referred_id):
+    try:
+        # Check if this referral already exists
+        c.execute("SELECT 1 FROM referral_logs WHERE referred_id = ?", (referred_id,))
+        if c.fetchone():
+            return False
+        
+        # Add referral record
+        c.execute("INSERT INTO referral_logs (referrer_id, referred_id) VALUES (?, ?)",
+                 (referrer_id, referred_id))
+        
+        # Update referrer's stats and balance
+        c.execute("UPDATE users SET balance = balance + 0.10, referrals = referrals + 1 WHERE user_id = ?",
+                 (referrer_id,))
+        
+        # Update referred user's referrer_id
+        c.execute("UPDATE users SET referrer_id = ? WHERE user_id = ?",
+                 (referrer_id, referred_id))
+        
+        conn.commit()
+        
+        # Notify referrer
+        try:
+            bot.send_message(referrer_id, TEXTS['referral_bonus'])
+        except:
+            pass
+            
+        return True
+    except Exception as e:
+        logging.error(f"Referral processing error: {e}")
+        return False
+
 # Keyboard Markups
 def main_menu_markup():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row("💳 Buy Referral Code", "💰 Withdraw Earnings")
-    markup.row("📊 My Stats", "🔄 Refresh Data")
+    markup.row(TEXTS['main_menu'][0], TEXTS['main_menu'][1])
+    markup.row(TEXTS['main_menu'][2], TEXTS['main_menu'][3])
     return markup
 
 def payment_methods_markup():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row("💳 AsiaCell", "💳 Zain Iraq")
-    markup.row("🔙 Main Menu")
+    markup.row(TEXTS['payment_methods'][0], TEXTS['payment_methods'][1])
+    markup.row(TEXTS['back_menu'])
     return markup
 
 def withdraw_methods_markup():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.row("💳 Zain Iraq", "💳 AsiaCell")
-    markup.row("💳 MasterCard/KNet", "💳 Crypto")
-    markup.row("🔙 Main Menu")
+    markup.row(TEXTS['withdraw_methods'][0], TEXTS['withdraw_methods'][1])
+    markup.row(TEXTS['withdraw_methods'][2], TEXTS['withdraw_methods'][3])
+    markup.row(TEXTS['back_menu'])
+    return markup
+
+def subscription_markup():
+    markup = types.InlineKeyboardMarkup()
+    for channel in CHANNELS:
+        markup.add(types.InlineKeyboardButton(f"Join {channel}", url=f"https://t.me/{channel.strip('@')}"))
+    markup.add(types.InlineKeyboardButton(TEXTS['subscription_done'], callback_data="check_sub"))
     return markup
 
 # Command handlers
@@ -137,9 +216,17 @@ def start_command(message):
         if message.from_user.last_name:
             full_name += f" {message.from_user.last_name}"
 
+        # Check for referral code
+        referral_code = None
+        if len(message.text.split()) > 1:
+            referral_code = message.text.split()[1]
+
         # Check subscription
         if not check_subscription(user_id):
-            show_subscription_alert(message)
+            channels = "\n".join(CHANNELS)
+            bot.send_message(message.chat.id, 
+                           TEXTS['not_subscribed'].format(channels=channels),
+                           reply_markup=subscription_markup())
             return
 
         # Register/update user
@@ -158,21 +245,28 @@ def start_command(message):
             """, (username, full_name, datetime.now(), user_id))
         
         conn.commit()
+        
+        # Process referral if exists
+        if referral_code:
+            try:
+                # Extract referrer_id from code (REF12345_timestamp)
+                referrer_id = int(referral_code[3:].split('_')[0])
+                if referrer_id != user_id:  # Prevent self-referral
+                    if process_referral(referrer_id, user_id):
+                        referrer_name = get_user_info(referrer_id)
+                        bot.send_message(user_id, 
+                                        TEXTS['referral_welcome'].format(name=referrer_name))
+            except Exception as e:
+                logging.error(f"Referral processing error: {e}")
+        
         show_main_menu(message)
         update_user_activity(user_id)
         
     except Exception as e:
         logging.error(f"Start command error: {e}")
         bot.send_message(message.chat.id, 
-                        "❌ Error occurred, please try later",
-                        reply_markup=types.ReplyKeyboardRemove())
-
-def show_subscription_alert(message):
-    markup = types.InlineKeyboardMarkup()
-    for channel in CHANNELS:
-        markup.add(types.InlineKeyboardButton(f"Join {channel}", url=f"https://t.me/{channel.strip('@')}"))
-    markup.add(types.InlineKeyboardButton("✅ Done", callback_data="check_sub"))
-    bot.send_message(message.chat.id, "⚠️ To start, please join our channels:", reply_markup=markup)
+                       TEXTS['error'],
+                       reply_markup=types.ReplyKeyboardRemove())
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def check_subscription_callback(call):
@@ -180,9 +274,9 @@ def check_subscription_callback(call):
         bot.delete_message(call.message.chat.id, call.message.message_id)
         show_main_menu(call.message)
     else:
-        bot.answer_callback_query(call.id, "❗ You haven't joined all channels", show_alert=True)
+        bot.answer_callback_query(call.id, "❗ Join all channels first | انضم لجميع القنوات أولاً", show_alert=True)
 
-@bot.message_handler(func=lambda message: message.text == "💳 Buy Referral Code")
+@bot.message_handler(func=lambda message: message.text == TEXTS['main_menu'][0])
 def handle_purchase_request(message):
     try:
         user_id = message.from_user.id
@@ -194,21 +288,14 @@ def handle_purchase_request(message):
             referral_link = f"https://t.me/{bot.get_me().username}?start={code}"
             bot.send_message(
                 message.chat.id,
-                f"✅ You already have an active referral code\n\n"
-                f"🔗 You can share this link:\n{referral_link}\n\n"
-                f"💰 You'll earn 0.1$ per new referral",
+                TEXTS['already_purchased'].format(link=referral_link),
                 reply_markup=main_menu_markup()
             )
             return
         
         bot.send_message(
             message.chat.id,
-            "💳 To buy your referral code:\n\n"
-            "Code price: 2$\n"
-            "Gives you the right to:\n"
-            "- Earn 0.1$ per new referral\n"
-            "- Share your unique link to earn more\n\n"
-            "Choose payment method:",
+            TEXTS['purchase_info'],
             reply_markup=payment_methods_markup()
         )
         update_user_activity(user_id)
@@ -217,17 +304,15 @@ def handle_purchase_request(message):
         logging.error(f"Purchase request error: {e}")
         bot.send_message(
             message.chat.id,
-            "❌ Error occurred, please try later",
+            TEXTS['error'],
             reply_markup=main_menu_markup()
         )
 
-@bot.message_handler(func=lambda message: message.text in ["💳 AsiaCell", "💳 Zain Iraq"])
+@bot.message_handler(func=lambda message: message.text in TEXTS['payment_methods'])
 def handle_payment_method(message):
-    method = "asiacell" if "Asia" in message.text else "zain"
+    method = message.text
     msg = bot.send_message(message.chat.id,
-                          f"🔔 Payment method: {message.text}\n\n"
-                          "📌 Please send your phone number:\n"
-                          "(Must have at least 2$ balance)",
+                          TEXTS['enter_phone'],
                           reply_markup=types.ReplyKeyboardRemove())
     bot.register_next_step_handler(msg, lambda m: process_payment(m, method))
 
@@ -237,7 +322,7 @@ def process_payment(message, method):
         phone = message.text.strip()
         
         if not phone.isdigit() or len(phone) < 8:
-            bot.send_message(message.chat.id, "❌ Invalid number, please try again", reply_markup=main_menu_markup())
+            bot.send_message(message.chat.id, TEXTS['invalid_phone'], reply_markup=main_menu_markup())
             return
         
         # Register payment request
@@ -254,15 +339,15 @@ def process_payment(message, method):
         admin_msg = (f"📌 New referral code purchase:\n\n"
                     f"👤 User: {get_user_info(user_id)}\n"
                     f"📱 Phone: {phone}\n"
-                    f"💳 Method: {'AsiaCell' if method == 'asiacell' else 'Zain Iraq'}\n"
+                    f"💳 Method: {method}\n"
                     f"🆔 User Code: {generate_code(user_id)}")
         
         bot.send_message(ORDER_CHANNEL, admin_msg, reply_markup=markup)
-        bot.send_message(user_id, "📬 Your request received, under review...", reply_markup=main_menu_markup())
+        bot.send_message(user_id, TEXTS['payment_request_sent'], reply_markup=main_menu_markup())
         conn.commit()
     except Exception as e:
         logging.error(f"Payment processing error: {e}")
-        bot.send_message(message.chat.id, "❌ Error occurred, please try later", reply_markup=main_menu_markup())
+        bot.send_message(message.chat.id, TEXTS['error'], reply_markup=main_menu_markup())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_", "reject_")))
 def handle_admin_decision(call):
@@ -281,11 +366,8 @@ def handle_admin_decision(call):
             # Notify user
             try:
                 bot.send_message(user_id,
-                                f"🎉 Your referral code activated!\n\n"
-                                f"🔗 Referral link:\n{referral_link}\n\n"
-                                f"💰 Earn 0.1$ for each signup via your link\n\n"
-                                f"📌 Share this link to start earning",
-                                reply_markup=main_menu_markup())
+                              TEXTS['payment_approved'].format(link=referral_link),
+                              reply_markup=main_menu_markup())
             except Exception as e:
                 logging.error(f"Message sending failed: {e}")
             
@@ -294,8 +376,8 @@ def handle_admin_decision(call):
             # Reject request
             try:
                 bot.send_message(user_id,
-                               "❌ Your request was rejected, please check info and try later",
-                               reply_markup=main_menu_markup())
+                              TEXTS['payment_rejected'],
+                              reply_markup=main_menu_markup())
             except Exception as e:
                 logging.error(f"Message sending failed: {e}")
             
@@ -310,7 +392,7 @@ def handle_admin_decision(call):
     except Exception as e:
         logging.error(f"Admin decision error: {e}")
 
-@bot.message_handler(func=lambda message: message.text == "💰 Withdraw Earnings")
+@bot.message_handler(func=lambda message: message.text == TEXTS['main_menu'][1])
 def handle_withdraw_request(message):
     try:
         user_id = message.from_user.id
@@ -318,23 +400,19 @@ def handle_withdraw_request(message):
         
         if balance < 2.0:
             bot.send_message(message.chat.id,
-                            "❗ Minimum withdrawal is 2$\n\n"
-                            "You can increase your balance by:\n"
-                            "- Getting more referrals\n"
-                            "- Buying additional referral codes",
-                            reply_markup=main_menu_markup())
+                           TEXTS['min_withdraw'],
+                           reply_markup=main_menu_markup())
             return
         
         msg = bot.send_message(message.chat.id,
-                             "📤 To withdraw earnings:\n\n"
-                             "Please send your referral code for verification:",
+                             TEXTS['verify_code'],
                              reply_markup=types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, verify_withdraw_code)
         
     except Exception as e:
         logging.error(f"Withdrawal request error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
+                        TEXTS['error'],
                         reply_markup=main_menu_markup())
 
 def verify_withdraw_code(message):
@@ -344,52 +422,39 @@ def verify_withdraw_code(message):
         
         if message.text.strip() == user_code:
             bot.send_message(message.chat.id,
-                           "💰 Choose withdrawal method:",
+                           TEXTS['choose_withdraw'],
                            reply_markup=withdraw_methods_markup())
         else:
             bot.send_message(message.chat.id,
-                           "❌ Verification code incorrect",
+                           TEXTS['invalid_code'],
                            reply_markup=main_menu_markup())
             
     except Exception as e:
         logging.error(f"Withdrawal verification error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=main_menu_markup())
+                       TEXTS['error'],
+                       reply_markup=main_menu_markup())
 
-@bot.message_handler(func=lambda message: message.text in ["💳 Zain Iraq", "💳 AsiaCell", "💳 MasterCard/KNet", "💳 Crypto"])
+@bot.message_handler(func=lambda message: message.text in TEXTS['withdraw_methods'])
 def handle_withdraw_method(message):
     try:
-        method = {
-            "💳 Zain Iraq": "zain",
-            "💳 AsiaCell": "asiacell",
-            "💳 MasterCard/KNet": "card",
-            "💳 Crypto": "crypto"
-        }[message.text]
-        
+        method = message.text
         msg = bot.send_message(message.chat.id,
-                             f"📤 Please send your {message.text} details:",
+                             TEXTS['enter_withdraw_details'].format(method=method),
                              reply_markup=types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, lambda m: process_withdraw(m, method))
         
     except Exception as e:
         logging.error(f"Withdrawal method error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=main_menu_markup())
+                       TEXTS['error'],
+                       reply_markup=main_menu_markup())
 
 def process_withdraw(message, method):
     try:
         user_id = message.from_user.id
         account_info = message.text.strip()
         balance = get_user_balance(user_id)
-        
-        # Validate info based on method
-        if method in ["zain", "asiacell"] and not account_info.isdigit():
-            bot.send_message(message.chat.id,
-                           "❌ Invalid account number for this method",
-                           reply_markup=main_menu_markup())
-            return
         
         # Register withdrawal request
         c.execute("INSERT INTO withdrawal_requests (user_id, amount, method, account_info) VALUES (?, ?, ?, ?)",
@@ -410,9 +475,7 @@ def process_withdraw(message, method):
         
         # Notify user
         bot.send_message(message.chat.id,
-                       f"✅ Withdrawal request received\n\n"
-                       f"⏳ Processing within 24 hours\n"
-                       f"📌 You'll be notified when completed",
+                       TEXTS['withdraw_request_sent'],
                        reply_markup=main_menu_markup())
         
         conn.commit()
@@ -420,10 +483,10 @@ def process_withdraw(message, method):
     except Exception as e:
         logging.error(f"Withdrawal processing error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=main_menu_markup())
+                       TEXTS['error'],
+                       reply_markup=main_menu_markup())
 
-@bot.message_handler(func=lambda message: message.text == "📊 My Stats")
+@bot.message_handler(func=lambda message: message.text == TEXTS['main_menu'][2])
 def handle_user_stats(message):
     try:
         user_id = message.from_user.id
@@ -437,7 +500,7 @@ def handle_user_stats(message):
         
         if not result:
             bot.send_message(message.chat.id,
-                           "❌ No data found",
+                           TEXTS['error'],
                            reply_markup=main_menu_markup())
             return
             
@@ -447,13 +510,16 @@ def handle_user_stats(message):
         c.execute("SELECT COUNT(*) FROM referral_logs WHERE referrer_id = ?", (user_id,))
         total_refs = c.fetchone()[0]
         
+        status = "Active/نشط" if has_purchased else "Inactive/غير نشط"
+        
         # Prepare stats message
-        stats_msg = (f"📊 Your stats:\n\n"
-                    f"💰 Current balance: {balance:.2f}$\n"
-                    f"👥 Active referrals: {referrals}\n"
-                    f"🔗 Total referrals: {total_refs}\n"
-                    f"📅 Join date: {join_date[:10]}\n"
-                    f"🔑 Referral code: {'✅ Active' if has_purchased else '❌ Inactive'}")
+        stats_msg = TEXTS['stats'].format(
+            balance=balance,
+            refs=referrals,
+            total_refs=total_refs,
+            join_date=join_date[:10],
+            status=status
+        )
         
         bot.send_message(message.chat.id,
                        stats_msg,
@@ -462,24 +528,24 @@ def handle_user_stats(message):
     except Exception as e:
         logging.error(f"Stats display error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=main_menu_markup())
+                       TEXTS['error'],
+                       reply_markup=main_menu_markup())
 
-@bot.message_handler(func=lambda message: message.text == "🔄 Refresh Data")
+@bot.message_handler(func=lambda message: message.text == TEXTS['main_menu'][3])
 def handle_refresh(message):
     try:
         user_id = message.from_user.id
         update_user_activity(user_id)
         bot.send_message(message.chat.id,
-                        "✅ Data refreshed successfully",
-                        reply_markup=main_menu_markup())
+                       TEXTS['refresh_success'],
+                       reply_markup=main_menu_markup())
     except Exception as e:
         logging.error(f"Refresh error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=main_menu_markup())
+                       TEXTS['error'],
+                       reply_markup=main_menu_markup())
 
-@bot.message_handler(func=lambda message: message.text == "🔙 Main Menu")
+@bot.message_handler(func=lambda message: message.text == TEXTS['back_menu'])
 def handle_back_to_main(message):
     show_main_menu(message)
 
@@ -494,17 +560,18 @@ def show_main_menu(message):
         
         if not result:
             bot.send_message(message.chat.id,
-                           "❌ No data found",
+                           TEXTS['error'],
                            reply_markup=types.ReplyKeyboardRemove())
             return
             
         balance, referrals, has_purchased = result
         
         # Prepare welcome message
-        welcome_msg = (f"Welcome {get_user_info(user_id)} 👋\n\n"
-                      f"💰 Current balance: {balance:.2f}$\n"
-                      f"👥 Referrals: {referrals}\n\n"
-                      f"📌 Choose from menu:")
+        welcome_msg = TEXTS['welcome'].format(
+            name=get_user_info(user_id),
+            balance=balance,
+            refs=referrals
+        )
         
         bot.send_message(message.chat.id,
                        welcome_msg,
@@ -513,8 +580,8 @@ def show_main_menu(message):
     except Exception as e:
         logging.error(f"Main menu error: {e}")
         bot.send_message(message.chat.id,
-                        "❌ Error occurred, please try later",
-                        reply_markup=types.ReplyKeyboardRemove())
+                       TEXTS['error'],
+                       reply_markup=types.ReplyKeyboardRemove())
 
 # Flask routes
 @app.route('/' + TOKEN, methods=['POST'])
