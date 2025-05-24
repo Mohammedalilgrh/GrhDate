@@ -657,7 +657,7 @@ def set_webhook():
     try:
         bot.remove_webhook()
         time.sleep(1)
-        bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
+        bot.set_webhook(url=f'https://invite2earnn-h0v1.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
         return "Webhook setup successfully!", 200
     except Exception as e:
         logging.error(f"Webhook setup error: {e}")
@@ -668,7 +668,7 @@ if __name__ == '__main__':
         print("🚀 Bot is running...")
         bot.remove_webhook()
         time.sleep(1)
-        bot.set_webhook(url=f'https://invite2earnn.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
+        bot.set_webhook(url=f'https://invite2earnn-h0v1.onrender.com/7897542906:AAFWO23YZhUhLpDJ500d6yZ4jcUnPZY450g')
         app.run(host="0.0.0.0", port=5000)
     except Exception as e:
         logging.error(f"Main error: {e}")
